@@ -114,18 +114,18 @@ export const PerformanceChart: React.FC<ChartProps> = ({ data, title, type, comp
   };
 
   return (
-    <div className="bg-white p-6 rounded-2xl border border-zinc-200 shadow-sm">
-      <h3 className="text-2xl font-bold text-zinc-800 mb-6">{title}</h3>
-      <div className="h-[420px] w-full">
+    <div className="bg-white p-4 rounded-xl border border-zinc-200 shadow-sm">
+      <h3 className="text-lg font-bold text-zinc-800 mb-4 uppercase tracking-tight">{title}</h3>
+      <div className="h-[300px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 40, right: 10, left: 10, bottom: 20 }} barGap="-100%">
+          <ComposedChart data={chartData} margin={{ top: 30, right: 10, left: 10, bottom: 10 }} barGap="-100%">
             <XAxis 
               dataKey="month" 
               axisLine={false} 
               tickLine={false} 
-              tick={{ fill: '#18181b', fontSize: 16, fontWeight: 'bold' }}
+              tick={{ fill: '#18181b', fontSize: 12, fontWeight: 'bold' }}
               tickFormatter={(val) => monthMap[val] || val}
-              dy={10}
+              dy={5}
             />
             <Tooltip content={<CustomTooltip />} />
             
@@ -134,16 +134,16 @@ export const PerformanceChart: React.FC<ChartProps> = ({ data, title, type, comp
               name={compareWith === 'plan' ? (isMonthly ? 'Kế hoạch' : 'KH Lũy kế') : (isMonthly ? 'Cùng kỳ' : 'CK Lũy kế')} 
               dataKey={targetDataKey} 
               fill="#f2f2f2" 
-              radius={[4, 4, 0, 0]} 
-              barSize={48}
+              radius={[2, 2, 0, 0]} 
+              barSize={32}
             />
             
             {/* Actual Bar - Nested */}
             <Bar 
               name={isMonthly ? 'Thực tế' : 'Thực tế Lũy kế'} 
               dataKey={mainDataKey} 
-              radius={[2, 2, 0, 0]} 
-              barSize={32}
+              radius={[1, 1, 0, 0]} 
+              barSize={20}
             >
               {chartData.map((entry, index) => (
                 <Cell 
@@ -161,10 +161,10 @@ export const PerformanceChart: React.FC<ChartProps> = ({ data, title, type, comp
                   return (
                     <text 
                       x={x + width / 2} 
-                      y={y - 15} 
+                      y={y - 10} 
                       fill={color} 
                       textAnchor="middle" 
-                      className="text-[16px] font-black"
+                      className="text-[11px] font-black"
                     >
                       {value.toFixed(0)}%
                     </text>

@@ -1,0 +1,1648 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
+import { dataService, GoogleSheetConfig } from './services/dataService';
+import { DataEntry } from './components/DataEntry';
+import { MiniProgress } from './components/MiniProgress';
+import { DepartmentData } from './types';
+import { cn, formatNumber, formatPercent, getPerformanceBadgeColor, calculatePerformance, getPerformanceTextColor } from './utils';
+
+export default function App() {
+  const [allDepts, setAllDepts] = useState<DepartmentData[]>([]);
+  const [selectedDeptId, setSelectedDeptId] = useState('all');
+  const [selectedMonth, setSelectedMonth] = useState<number>(0);
+  const [selectedYear, setSelectedYear] = useState<number>(2026);
+  const [availableYears, setAvailableYears] = useState<number[]>([]);
+  const [isDeptMenuOpen, setIsDeptMenuOpen] = useState(false);
+  const [isMonthMenuOpen, setIsMonthMenuOpen] = useState(false);
+  const [isYearMenuOpen, setIsYearMenuOpen] = useState(false);
+  const [isDataEntryOpen, setIsDataEntryOpen] = useState(false);
+
+  const [isYearManagementOpen, setIsYearManagementOpen] = useState(false);
+  const [isGSheetModalOpen, setIsGSheetModalOpen] = useState(false);
+  const [gsheetConfig, setGsheetConfig] = useState<GoogleSheetConfig | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [sortConfig, setSortConfig] = useState<{
+    field: 'perfVsPlan' | 'monthPerfVsPlan' | 'annualCompletion';
+    direction: 'asc' | 'desc';
+  }>({ field: 'perfVsPlan', direction: 'desc' });
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
+  const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
+  const [dashboardTab, setDashboardTab] = useState<'revenue' | 'profit'>('revenue');
+
+  const months = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+  const currentYear = new Date().getFullYear();
+
+  useEffect(() => {
+    setAvailableYears(dataService.getYears());
+    setGsheetConfig(dataService.getGoogleSheetConfig());
+  }, []);
+
+  // Auto-sync effect
+  useEffect(() => {
+    if (gsheetConfig?.autoSync && gsheetConfig.sheetId) {
+      const sync = async () => {
+        try {
+          await dataService.syncWithGoogleSheet();
+          const updatedYears = dataService.getYears();
+          setAvailableYears(updatedYears);
+          const data = dataService.getData(selectedYear);
+          setAllDepts(data);
+          setGsheetConfig(dataService.getGoogleSheetConfig());
+        } catch (e) {
+          console.error('Auto-sync failed', e);
+        }
+      };
+      sync();
+    }
+  }, [gsheetConfig?.autoSync]);
+
+  useEffect(() => {
+    const data = dataService.getData(selectedYear);
+    setAllDepts(data);
+    
+    // Set default month to the latest month with actual data
+    if (data.length > 0) {
+      const company = data.find(d => d.type === 'company');
+      if (company) {
+        const reversedMonthly = [...company.monthly].reverse();
+        const lastActualIndexFromEnd = reversedMonthly.findIndex(m => m.actual > 0);
+        const defaultMonth = lastActualIndexFromEnd === -1 ? 0 : company.monthly.length - 1 - lastActualIndexFromEnd;
+        setSelectedMonth(defaultMonth);
+      }
+    }
+  }, [selectedYear]);
+
+  const cumulativeOverview = useMemo(() => {
+    return allDepts.map(dept => {
+      const cum = dataService.calculateCumulative(dept.monthly, selectedMonth);
+      const currentMonth = dept.monthly[selectedMonth];
+
+      if (dashboardTab === 'profit') {
+        return {
+          ...dept,
+          // Monthly
+          monthActual: currentMonth.profitActual || 0,
+          monthPlan: currentMonth.profitPlan || 0,
+          monthLastYear: currentMonth.profitLastYear || 0,
+          monthPerfVsPlan: calculatePerformance(currentMonth.profitActual || 0, currentMonth.profitPlan || 0),
+          monthPerfVsLastYear: calculatePerformance(currentMonth.profitActual || 0, currentMonth.profitLastYear || 0),
+          // Cumulative
+          actual: cum.profitActual || 0,
+          plan: cum.profitPlan || 0,
+          lastYear: cum.profitLastYear || 0,
+          annualPlan: cum.annualProfitPlan || 0,
+          perfVsPlan: calculatePerformance(cum.profitActual || 0, cum.profitPlan || 0),
+          perfVsLastYear: calculatePerformance(cum.profitActual || 0, cum.profitLastYear || 0),
+          annualCompletion: calculatePerformance(cum.profitActual || 0, cum.annualProfitPlan || 0),
+        };
+      }
+
+      return {
+        ...dept,
+        // Monthly
+        monthActual: currentMonth.actual,
+        monthPlan: currentMonth.plan,
+        monthLastYear: currentMonth.lastYear,
+        monthPerfVsPlan: calculatePerformance(currentMonth.actual, currentMonth.plan),
+        monthPerfVsLastYear: calculatePerformance(currentMonth.actual, currentMonth.lastYear),
+        // Cumulative
+        actual: cum.actual,
+        plan: cum.plan,
+        lastYear: cum.lastYear,
+        annualPlan: cum.annualPlan,
+        perfVsPlan: calculatePerformance(cum.actual, cum.plan),
+        perfVsLastYear: calculatePerformance(cum.actual, cum.lastYear),
+        annualCompletion: calculatePerformance(cum.actual, cum.annualPlan),
+      };
+    });
+  }, [allDepts, selectedMonth, dashboardTab]);
+
+  const sortedOverview = useMemo(() => {
+    const company = cumulativeOverview.find(d => d.type === 'company');
+    if (!company) return { bansSection: [], centersSection: [] };
+
+    const sortFn = (a: any, b: any) => {
+      const valA = a[sortConfig.field] || 0;
+      const valB = b[sortConfig.field] || 0;
+      return sortConfig.direction === 'desc' ? valB - valA : valA - valB;
+    };
+
+    const bans = dashboardTab === 'revenue' 
+      ? cumulativeOverview
+          .filter(d => d.type === 'ban')
+          .map(b => ({ ...b, indent: 1 }))
+          .sort(sortFn)
+      : [];
+
+    const centers = cumulativeOverview
+      .filter(d => d.type === 'center')
+      .map(c => ({
+        ...c,
+        indent: 1,
+        phongs: dashboardTab === 'revenue' 
+          ? cumulativeOverview
+              .filter(p => p.parentId === c.id)
+              .map(p => ({ ...p, indent: 2 }))
+              .sort(sortFn)
+          : []
+      }))
+      .sort(sortFn);
+
+    // Calculate total for centers section
+    const centersTotal = {
+      id: 'centers_total',
+      name: 'TỔNG TRUNG TÂM',
+      type: 'company', // Use 'company' type for bold styling
+      monthActual: centers.reduce((sum, c) => sum + c.monthActual, 0),
+      monthPlan: centers.reduce((sum, c) => sum + c.monthPlan, 0),
+      monthLastYear: centers.reduce((sum, c) => sum + c.monthLastYear, 0),
+      actual: centers.reduce((sum, c) => sum + c.actual, 0),
+      plan: centers.reduce((sum, c) => sum + c.plan, 0),
+      lastYear: centers.reduce((sum, c) => sum + c.lastYear, 0),
+      annualPlan: centers.reduce((sum, c) => sum + c.annualPlan, 0),
+    };
+    
+    // Calculate percentages for centersTotal
+    const ct = centersTotal as any;
+    ct.monthPerfVsPlan = calculatePerformance(ct.monthActual, ct.monthPlan);
+    ct.monthPerfVsLastYear = calculatePerformance(ct.monthActual, ct.monthLastYear);
+    ct.perfVsPlan = calculatePerformance(ct.actual, ct.plan);
+    ct.perfVsLastYear = calculatePerformance(ct.actual, ct.lastYear);
+    ct.annualCompletion = calculatePerformance(ct.actual, ct.annualPlan);
+
+    return {
+      company,
+      centersTotal: ct,
+      bansSection: [company, ...bans],
+      centersSection: [ct, ...centers]
+    };
+  }, [cumulativeOverview, sortConfig]);
+
+  // Expand top-level departments by default
+  useEffect(() => {
+    if (sortedOverview.company?.id || sortedOverview.centersTotal?.id) {
+      setExpandedDepts(prev => {
+        const next = new Set(prev);
+        if (sortedOverview.company?.id) next.add(sortedOverview.company.id);
+        if (sortedOverview.centersTotal?.id) next.add(sortedOverview.centersTotal.id);
+        return next;
+      });
+    }
+  }, [sortedOverview.company?.id, sortedOverview.centersTotal?.id]);
+
+  const toggleExpand = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedDepts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAddYear = (yearToDeclare?: number) => {
+    const nextYear = availableYears.length > 0 ? Math.min(...availableYears) - 1 : currentYear;
+    const yearInput = yearToDeclare !== undefined ? yearToDeclare.toString() : prompt('Nhập năm muốn khai báo:', nextYear.toString());
+    
+    if (yearInput) {
+      const year = parseInt(yearInput);
+      if (isNaN(year)) {
+        alert('Vui lòng nhập năm hợp lệ.');
+        return;
+      }
+      if (year > currentYear) {
+        alert(`Chỉ được khai báo tối đa đến năm hiện tại (${currentYear}).`);
+        return;
+      }
+      dataService.addYear(year);
+      const updatedYears = dataService.getYears();
+      setAvailableYears(updatedYears);
+      setSelectedYear(year);
+      setIsYearMenuOpen(false);
+    }
+  };
+
+  const handleDeleteYear = (year: number) => {
+    if (confirm(`Bạn có chắc chắn muốn xóa toàn bộ dữ liệu của năm ${year}? Hành động này không thể hoàn tác.`)) {
+      dataService.deleteYear(year);
+      const updatedYears = dataService.getYears();
+      setAvailableYears(updatedYears);
+      if (selectedYear === year) {
+        const newSelectedYear = updatedYears[0] || currentYear;
+        setSelectedYear(newSelectedYear);
+      }
+      alert(`Đã xóa dữ liệu năm ${year}.`);
+    }
+  };
+
+  const handleResetCurrentYear = () => {
+    if (confirm(`Bạn có chắc chắn muốn RESET TOÀN BỘ dữ liệu của năm ${selectedYear}? \n\n- Tất cả số liệu đã nhập/đồng bộ sẽ bị xóa.\n- Dữ liệu sẽ quay về trạng thái trống (0).\n- Hành động này không thể hoàn tác.`)) {
+      localStorage.removeItem(`corporate_dashboard_data_${selectedYear}`);
+      const data = dataService.getData(selectedYear);
+      setAllDepts(data);
+      alert(`Đã reset dữ liệu năm ${selectedYear}.`);
+    }
+  };
+
+  const handleClearAllData = () => {
+    if (confirm('BẠN CÓ CHẮC CHẮN MUỐN XÓA TOÀN BỘ DỮ LIỆU CỦA TẤT CẢ CÁC NĂM? \n\n- Tất cả số liệu đã nhập sẽ bị mất.\n- Danh sách năm sẽ được reset về năm hiện tại.\n- Hành động này không thể hoàn tác.')) {
+      dataService.clearAllData();
+      const updatedYears = dataService.getYears();
+      setAvailableYears(updatedYears);
+      const newSelectedYear = updatedYears[0];
+      setSelectedYear(newSelectedYear);
+      const data = dataService.getData(newSelectedYear);
+      setAllDepts(data);
+      alert('Đã xóa toàn bộ dữ liệu và reset danh sách năm.');
+      setIsYearManagementOpen(false);
+    }
+  };
+
+  const handleSaveData = (newData: DepartmentData[]) => {
+    const aggregatedData = dataService.saveData(newData, selectedYear);
+    setAllDepts(aggregatedData);
+    setIsDataEntryOpen(false);
+  };
+
+  const handleSyncGSheet = async () => {
+    const sheetId = dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId;
+    if (!sheetId) return;
+    
+    setIsSyncing(true);
+    setSyncStatus(null);
+    try {
+      await dataService.syncWithGoogleSheet(dashboardTab);
+      const updatedYears = dataService.getYears();
+      setAvailableYears(updatedYears);
+      const data = dataService.getData(selectedYear);
+      setAllDepts(data);
+      setGsheetConfig(dataService.getGoogleSheetConfig());
+      setSyncStatus({ 
+        type: 'success', 
+        message: `Đồng bộ dữ liệu ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'} thành công!` 
+      });
+      // Clear success message after 3 seconds
+      setTimeout(() => setSyncStatus(null), 3000);
+    } catch (error: any) {
+      setSyncStatus({ 
+        type: 'error', 
+        message: error.message || 'Đồng bộ thất bại. Vui lòng kiểm tra lại ID và quyền chia sẻ.' 
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const downloadGSheetTemplate = () => {
+    const headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear'];
+    const data: any[] = [];
+    
+    const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    if (dashboardTab === 'profit') {
+      // For profit, include Company and Centers
+      const profitDepts = allDepts.filter(d => d.type === 'company' || d.type === 'center');
+      profitDepts.forEach(dept => {
+        monthsShort.forEach(m => {
+          data.push({
+            'Year': selectedYear,
+            'DeptID': dept.id,
+            'Month': m,
+            'Actual': 0,
+            'Plan': 0,
+            'LastYear': 0
+          });
+        });
+      });
+    } else {
+      // For revenue, include Bans and Phongs
+      allDepts.forEach(dept => {
+        if (dept.type === 'phong' || dept.type === 'ban') {
+          monthsShort.forEach(m => {
+            data.push({
+              'Year': selectedYear,
+              'DeptID': dept.id,
+              'Month': m,
+              'Actual': 0,
+              'Plan': 0,
+              'LastYear': 0
+            });
+          });
+        }
+      });
+    }
+
+    const ws = XLSX.utils.json_to_sheet(data, { header: headers });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, `Google_Sheet_Template_${dashboardTab === 'revenue' ? 'DoanhThu' : 'LoiNhuan'}_${selectedYear}.xlsx`);
+  };
+
+  if (allDepts.length === 0) return null;
+
+  return (
+    <div className="min-h-screen bg-zinc-50 text-zinc-900 font-sans selection:bg-zinc-200">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-zinc-200 px-4 py-2">
+        <div className="max-w-[1600px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-zinc-900 rounded-lg flex items-center justify-center text-white shadow-lg">
+              <LayoutDashboard size={16} />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight">Dashboard Hiệu Suất</h1>
+              <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest leading-none">Corporate Performance Analytics</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Year Selector */}
+            <div className="relative">
+              <button 
+                onClick={() => setIsYearMenuOpen(!isYearMenuOpen)}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 transition-all shadow-sm"
+              >
+                <Settings size={16} className="text-zinc-400" />
+                <span>Năm {selectedYear}</span>
+                <ChevronDown size={16} className={cn("text-zinc-400 transition-transform", isYearMenuOpen && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {isYearMenuOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute top-full left-0 mt-2 w-56 bg-white border border-zinc-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                  >
+                    <div className="max-h-64 overflow-y-auto border-b border-zinc-100">
+                      {availableYears.map((year) => (
+                        <button
+                          key={year}
+                          onClick={() => {
+                            setSelectedYear(year);
+                            setIsYearMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2 text-left transition-colors flex items-center justify-between",
+                            selectedYear === year ? "bg-zinc-900 text-white" : "text-zinc-700 hover:bg-zinc-100"
+                          )}
+                        >
+                          <span className="text-[11px] font-bold">Năm {year}</span>
+                          {year === currentYear && (
+                            <span className={cn(
+                              "text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter",
+                              selectedYear === year ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-500"
+                            )}>
+                              Hiện tại
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="p-2 space-y-1">
+                      <button
+                        onClick={handleAddYear}
+                        className="w-full px-3 py-2 text-left text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <Settings size={14} />
+                        Thêm năm khai báo
+                      </button>
+                      <button
+                        onClick={handleClearAllData}
+                        className="w-full px-3 py-2 text-left text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <Settings size={14} />
+                        Xóa toàn bộ dữ liệu
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Month Selector */}
+            <div className="relative">
+              <button 
+                onClick={() => setIsMonthMenuOpen(!isMonthMenuOpen)}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 transition-all shadow-sm"
+              >
+                <Filter size={16} className="text-zinc-400" />
+                <span>{months[selectedMonth]}</span>
+                <ChevronDown size={16} className={cn("text-zinc-400 transition-transform", isMonthMenuOpen && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {isMonthMenuOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute top-full left-0 mt-2 w-48 bg-white border border-zinc-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                  >
+                    <div className="max-h-64 overflow-y-auto">
+                      {months.map((month, index) => (
+                        <button
+                          key={month}
+                          onClick={() => {
+                            setSelectedMonth(index);
+                            setIsMonthMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2 text-left text-[11px] font-bold transition-colors hover:bg-zinc-50",
+                            selectedMonth === index ? "text-blue-600 bg-blue-50/50" : "text-zinc-600"
+                          )}
+                        >
+                          {month}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <button 
+              onClick={() => setIsYearManagementOpen(true)}
+              className="p-2 bg-white border border-zinc-200 rounded-lg text-zinc-500 hover:text-zinc-900 hover:border-zinc-400 transition-all shadow-sm"
+              title="Quản lý năm & Dữ liệu"
+            >
+              <Settings size={18} />
+            </button>
+
+            <button 
+              onClick={() => setIsGSheetModalOpen(true)}
+              className={cn(
+                "p-2 border rounded-lg transition-all shadow-sm flex items-center gap-1.5",
+                (dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId)
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100" 
+                  : "bg-white border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-400"
+              )}
+              title={`Kết nối Google Sheets (${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'})`}
+            >
+              <Cloud size={18} />
+              {(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId) && <span className="text-[10px] font-bold">Linked</span>}
+            </button>
+
+            <button 
+              onClick={() => setIsDataEntryOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-zinc-900 text-white rounded-lg text-sm font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+            >
+              <TableIcon size={16} />
+              <span>Khai báo số liệu</span>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 py-4 space-y-4">
+        {/* Tab Switcher */}
+        <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-lg w-fit">
+          <button
+            onClick={() => setDashboardTab('revenue')}
+            className={cn(
+              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+              dashboardTab === 'revenue' 
+                ? "bg-white text-zinc-900 shadow-sm" 
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Doanh thu
+          </button>
+          <button
+            onClick={() => setDashboardTab('profit')}
+            className={cn(
+              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+              dashboardTab === 'profit' 
+                ? "bg-white text-zinc-900 shadow-sm" 
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Lợi nhuận
+          </button>
+        </div>
+
+        {/* Legend / Info */}
+        <div className="flex flex-wrap items-center justify-between gap-4 p-2.5 bg-white border border-zinc-200 rounded-xl shadow-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+              <Info size={14} />
+              <span>Chỉ số màu sắc:</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-xs font-bold">≥ 100% (Đạt)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-amber-500" />
+                <span className="text-xs font-bold">80% - 99% (Cảnh báo)</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-rose-500" />
+                <span className="text-xs font-bold">&lt; 80% (Kém)</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 border-l border-zinc-100 pl-4">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+              <ArrowUpDown size={14} />
+              <span>Sắp xếp:</span>
+            </div>
+            
+            <div className="relative">
+              <button
+                onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 hover:border-zinc-400 transition-all"
+              >
+                {sortConfig.field === 'monthPerfVsPlan' ? '% KH Tháng' : 
+                 sortConfig.field === 'perfVsPlan' ? '% KH Lũy kế' : 
+                 '% HT KH Năm'}
+                <ChevronDown size={14} className={cn("text-zinc-400 transition-transform", isSortMenuOpen && "rotate-180")} />
+              </button>
+
+              <AnimatePresence>
+                {isSortMenuOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute top-full right-0 mt-2 w-48 bg-white border border-zinc-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                  >
+                    <div className="p-1">
+                      {[
+                        { id: 'monthPerfVsPlan', label: '% KH Tháng' },
+                        { id: 'perfVsPlan', label: '% KH Lũy kế' },
+                        { id: 'annualCompletion', label: '% HT KH Năm' }
+                      ].map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => {
+                            setSortConfig({ ...sortConfig, field: item.id as any });
+                            setIsSortMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2 text-left text-[11px] font-bold transition-colors rounded-lg",
+                            sortConfig.field === item.id ? "bg-zinc-900 text-white" : "text-zinc-600 hover:bg-zinc-100"
+                          )}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <button
+              onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'desc' ? 'asc' : 'desc' })}
+              className="p-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-zinc-500 hover:text-zinc-900 hover:border-zinc-400 transition-all shadow-sm"
+              title={sortConfig.direction === 'desc' ? "Sắp xếp giảm dần" : "Sắp xếp tăng dần"}
+            >
+              {sortConfig.direction === 'desc' ? (
+                <ArrowDownWideNarrow size={16} />
+              ) : (
+                <ArrowUpNarrowWide size={16} />
+              )}
+            </button>
+          </div>
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6 overflow-x-hidden pb-8"
+        >
+          <div className="w-full space-y-10">
+            {/* Section 1: Company & Bans */}
+            {dashboardTab === 'revenue' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
+                    <h2 className="text-xl font-bold text-zinc-800">
+                      Khối Ban trực thuộc Công ty
+                    </h2>
+                  </div>
+                  <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest bg-zinc-100 px-3 py-1 rounded-full">
+                    {sortedOverview.bansSection.length - 1} Ban
+                  </div>
+                </div>
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                  <table className="w-full text-left border-separate border-spacing-0 table-fixed">
+                      <colgroup>
+                        <col className="w-[23%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[6%]" />
+                        <col className="w-[7%]" />
+                        <col className="w-[7%]" />
+                      </colgroup>
+                      <thead>
+                        <tr className="bg-zinc-200 text-[11px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
+                          <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
+                          <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                          <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
+                          <th colSpan={2} className="px-1 py-2 text-center bg-zinc-200">Năm</th>
+                        </tr>
+                        <tr className="bg-zinc-100 text-[10px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>
+                          <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>
+                          <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>
+                          <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>
+                          <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                          <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH Năm</th>
+                          <th className="px-1 py-2 text-center">% HT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-50">
+                        {/* Company Row */}
+                        <tr className="bg-zinc-50/30 font-bold group hover:bg-zinc-50/50 transition-colors cursor-pointer" onClick={() => {
+                          setSelectedDeptId(sortedOverview.company.id);
+                        }}>
+                          <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                            <div className="flex items-center gap-2 pl-0">
+                              <button 
+                                onClick={(e) => toggleExpand(sortedOverview.company.id, e)}
+                                className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
+                              >
+                                <ChevronDown 
+                                  size={14} 
+                                  className={cn("text-zinc-900 transition-transform duration-200", 
+                                    !expandedDepts.has(sortedOverview.company.id) && "-rotate-90"
+                                  )} 
+                                />
+                              </button>
+                              <div className="w-1 h-1 rounded-full bg-zinc-900" />
+                              <span className="text-[11px] text-zinc-900 font-bold truncate">{sortedOverview.company.name}</span>
+                            </div>
+                          </td>
+                          {/* Tháng hiện tại */}
+                          <td className="px-1 py-1.5 text-[11px] font-bold text-right">{formatNumber(sortedOverview.company.monthActual)}</td>
+                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthPlan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={sortedOverview.company.monthPerfVsPlan} />
+                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(sortedOverview.company.monthPerfVsPlan)
+                              )}>
+                                {formatPercent(sortedOverview.company.monthPerfVsPlan)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthLastYear)}</td>
+                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={sortedOverview.company.monthPerfVsLastYear} />
+                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(sortedOverview.company.monthPerfVsLastYear)
+                              )}>
+                                {formatPercent(sortedOverview.company.monthPerfVsLastYear)}
+                              </span>
+                            </div>
+                          </td>
+                          {/* Lũy kế */}
+                          <td className="px-1 py-1.5 text-[11px] font-bold text-right">{formatNumber(sortedOverview.company.actual)}</td>
+                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.plan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={sortedOverview.company.perfVsPlan} />
+                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(sortedOverview.company.perfVsPlan)
+                              )}>
+                                {formatPercent(sortedOverview.company.perfVsPlan)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.lastYear)}</td>
+                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={sortedOverview.company.perfVsLastYear} />
+                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(sortedOverview.company.perfVsLastYear)
+                              )}>
+                                {formatPercent(sortedOverview.company.perfVsLastYear)}
+                              </span>
+                            </div>
+                          </td>
+                          {/* Năm */}
+                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.annualPlan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={sortedOverview.company.annualCompletion} />
+                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(sortedOverview.company.annualCompletion)
+                              )}>
+                                {formatPercent(sortedOverview.company.annualCompletion)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+  
+                        {/* Ban Rows */}
+                        <AnimatePresence initial={false}>
+                          {expandedDepts.has(sortedOverview.company.id) && sortedOverview.bansSection.filter((d: any) => d.type === 'ban').map((dept: any) => (
+                            <motion.tr 
+                              key={dept.id} 
+                              initial={{ opacity: 0, height: 0 }}
+                              animate={{ opacity: 1, height: 'auto' }}
+                              exit={{ opacity: 0, height: 0 }}
+                              className="group hover:bg-zinc-50/50 transition-colors cursor-pointer overflow-hidden" 
+                              onClick={() => {
+                                setSelectedDeptId(dept.id);
+                              }}
+                            >
+                              <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                                <div className="flex items-center gap-2 pl-6">
+                                  <div className="w-1 h-1 rounded-full bg-amber-500" />
+                                  <span className="text-[11px] text-zinc-900 font-normal truncate">{dept.name}</span>
+                                </div>
+                              </td>
+                              {/* Tháng hiện tại */}
+                              <td className="px-1 py-1.5 text-[11px] font-normal text-right">{formatNumber(dept.monthActual)}</td>
+                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthPlan)}</td>
+                              <td className="px-1 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <MiniProgress percentage={dept.monthPerfVsPlan} />
+                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                    getPerformanceTextColor(dept.monthPerfVsPlan)
+                                  )}>
+                                    {formatPercent(dept.monthPerfVsPlan)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthLastYear)}</td>
+                              <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                                <div className="flex items-center gap-1">
+                                  <MiniProgress percentage={dept.monthPerfVsLastYear} />
+                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                    getPerformanceTextColor(dept.monthPerfVsLastYear)
+                                  )}>
+                                    {formatPercent(dept.monthPerfVsLastYear)}
+                                  </span>
+                                </div>
+                              </td>
+                              {/* Lũy kế */}
+                              <td className="px-1 py-1.5 text-[11px] font-normal text-right">{formatNumber(dept.actual)}</td>
+                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.plan)}</td>
+                              <td className="px-1 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <MiniProgress percentage={dept.perfVsPlan} />
+                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                    getPerformanceTextColor(dept.perfVsPlan)
+                                  )}>
+                                    {formatPercent(dept.perfVsPlan)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.lastYear)}</td>
+                              <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                                <div className="flex items-center gap-1">
+                                  <MiniProgress percentage={dept.perfVsLastYear} />
+                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                    getPerformanceTextColor(dept.perfVsLastYear)
+                                  )}>
+                                    {formatPercent(dept.perfVsLastYear)}
+                                  </span>
+                                </div>
+                              </td>
+                              {/* Năm */}
+                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.annualPlan)}</td>
+                              <td className="px-1 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <MiniProgress percentage={dept.annualCompletion} />
+                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                    getPerformanceTextColor(dept.annualCompletion)
+                                  )}>
+                                    {formatPercent(dept.annualCompletion)}
+                                  </span>
+                                </div>
+                              </td>
+                            </motion.tr>
+                          ))}
+                        </AnimatePresence>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+            )}
+            </div>
+
+            {/* Section 2: Company & Centers */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
+                  <h2 className="text-xl font-bold text-zinc-800">Khối Trung tâm & Phòng trực thuộc</h2>
+                </div>
+                <div className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest bg-zinc-100 px-3 py-1 rounded-full">
+                  {sortedOverview.centersSection.length - 1} Trung tâm
+                </div>
+              </div>
+              
+              {/* Unified Scroll Container for Section 2 */}
+              <div className="overflow-x-auto pb-4 -mx-4 px-4">
+                <div className="min-w-[1200px] space-y-6">
+                  {/* Company Header Row for Centers */}
+                  <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                    <table className="w-full text-left border-separate border-spacing-0 table-fixed">
+                    <colgroup>
+                      <col className="w-[23%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[7%]" />
+                    </colgroup>
+                    <thead>
+                      <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
+                        <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
+                        <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                        <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
+                        <th colSpan={2} className="px-1 py-2 text-center bg-zinc-200">Năm</th>
+                      </tr>
+                      <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>
+                        <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>
+                        <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>
+                        <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>
+                        <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH Năm LN' : 'KH Năm'}</th>
+                        <th className="px-1 py-2 text-center">% HT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="bg-zinc-50/30 font-bold group hover:bg-zinc-50/50 transition-colors cursor-pointer" onClick={() => {
+                        setSelectedDeptId(sortedOverview.centersTotal.id);
+                      }}>
+                        <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                          <div className="flex items-center gap-2 pl-0">
+                            <button 
+                              onClick={(e) => toggleExpand(sortedOverview.centersTotal.id, e)}
+                              className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
+                            >
+                              <ChevronDown 
+                                size={14} 
+                                className={cn("text-zinc-900 transition-transform duration-200", 
+                                  !expandedDepts.has(sortedOverview.centersTotal.id) && "-rotate-90"
+                                )} 
+                              />
+                            </button>
+                            <div className="w-1 h-1 rounded-full bg-zinc-900" />
+                            <span className="text-[13px] text-zinc-900 font-bold truncate">{sortedOverview.centersTotal.name}</span>
+                          </div>
+                        </td>
+                        {/* Tháng hiện tại */}
+                        <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.centersTotal.monthActual)}</td>
+                        <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.monthPlan)}</td>
+                        <td className="px-1 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <MiniProgress percentage={sortedOverview.centersTotal.monthPerfVsPlan} />
+                            <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                              getPerformanceTextColor(sortedOverview.centersTotal.monthPerfVsPlan)
+                            )}>
+                              {formatPercent(sortedOverview.centersTotal.monthPerfVsPlan)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.monthLastYear)}</td>
+                        <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                          <div className="flex items-center gap-1">
+                            <MiniProgress percentage={sortedOverview.centersTotal.monthPerfVsLastYear} />
+                            <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                              getPerformanceTextColor(sortedOverview.centersTotal.monthPerfVsLastYear)
+                            )}>
+                              {formatPercent(sortedOverview.centersTotal.monthPerfVsLastYear)}
+                            </span>
+                          </div>
+                        </td>
+                        {/* Lũy kế */}
+                        <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.centersTotal.actual)}</td>
+                        <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.plan)}</td>
+                        <td className="px-1 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <MiniProgress percentage={sortedOverview.centersTotal.perfVsPlan} />
+                            <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                              getPerformanceTextColor(sortedOverview.centersTotal.perfVsPlan)
+                            )}>
+                              {formatPercent(sortedOverview.centersTotal.perfVsPlan)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.lastYear)}</td>
+                        <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                          <div className="flex items-center gap-1">
+                            <MiniProgress percentage={sortedOverview.centersTotal.perfVsLastYear} />
+                            <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                              getPerformanceTextColor(sortedOverview.centersTotal.perfVsLastYear)
+                            )}>
+                              {formatPercent(sortedOverview.centersTotal.perfVsLastYear)}
+                            </span>
+                          </div>
+                        </td>
+                        {/* Năm */}
+                        <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.annualPlan)}</td>
+                        <td className="px-1 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <MiniProgress percentage={sortedOverview.centersTotal.annualCompletion} />
+                            <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                              getPerformanceTextColor(sortedOverview.centersTotal.annualCompletion)
+                            )}>
+                              {formatPercent(sortedOverview.centersTotal.annualCompletion)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                  {/* Center Groups (Separate Boxes) */}
+                  <AnimatePresence initial={false}>
+                    {(dashboardTab === 'profit' || expandedDepts.has(sortedOverview.centersTotal.id)) && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="grid grid-cols-1 gap-4"
+                      >
+                        {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (
+                          <div key={center.id} className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                        <table className="w-full text-left border-separate border-spacing-0 table-fixed">
+                        <colgroup>
+                          <col className="w-[23%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[7%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[7%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[7%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[6%]" />
+                          <col className="w-[7%]" />
+                          <col className="w-[7%]" />
+                        </colgroup>
+                        <thead>
+                          <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
+                            <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
+                            <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                            <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
+                            <th colSpan={2} className="px-1 py-2 text-center bg-zinc-200">Năm</th>
+                          </tr>
+                          <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>
+                            <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>
+                            <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>
+                            <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>
+                            <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                            <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH Năm LN' : 'KH Năm'}</th>
+                            <th className="px-1 py-2 text-center">% HT</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-50">
+                          {/* Center Row */}
+                          <tr className="bg-blue-50/30 group hover:bg-blue-50/50 transition-colors cursor-pointer" onClick={() => {
+                            setSelectedDeptId(center.id);
+                          }}>
+                            <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                              <div className="flex items-center gap-2 pl-4">
+                                <button 
+                                  onClick={(e) => toggleExpand(center.id, e)}
+                                  className="p-0.5 hover:bg-blue-100 rounded transition-colors"
+                                >
+                                  <ChevronDown 
+                                    size={14} 
+                                    className={cn("text-blue-500 transition-transform duration-200", 
+                                      !expandedDepts.has(center.id) && "-rotate-90"
+                                    )} 
+                                  />
+                                </button>
+                                <div className="w-1 h-1 rounded-full bg-blue-500" />
+                                <span className="text-[13px] text-zinc-900 font-bold truncate">{center.name}</span>
+                              </div>
+                            </td>
+                            {/* Tháng hiện tại */}
+                            <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(center.monthActual)}</td>
+                            <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.monthPlan)}</td>
+                            <td className="px-1 py-1.5">
+                              <div className="flex items-center gap-1">
+                                <MiniProgress percentage={center.monthPerfVsPlan} />
+                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                  getPerformanceTextColor(center.monthPerfVsPlan)
+                                )}>
+                                  {formatPercent(center.monthPerfVsPlan)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.monthLastYear)}</td>
+                            <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                              <div className="flex items-center gap-1">
+                                <MiniProgress percentage={center.monthPerfVsLastYear} />
+                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                  getPerformanceTextColor(center.monthPerfVsLastYear)
+                                )}>
+                                  {formatPercent(center.monthPerfVsLastYear)}
+                                </span>
+                              </div>
+                            </td>
+                            {/* Lũy kế */}
+                            <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(center.actual)}</td>
+                            <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.plan)}</td>
+                            <td className="px-1 py-1.5">
+                              <div className="flex items-center gap-1">
+                                <MiniProgress percentage={center.perfVsPlan} />
+                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                  getPerformanceTextColor(center.perfVsPlan)
+                                )}>
+                                  {formatPercent(center.perfVsPlan)}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.lastYear)}</td>
+                            <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                              <div className="flex items-center gap-1">
+                                <MiniProgress percentage={center.perfVsLastYear} />
+                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                  getPerformanceTextColor(center.perfVsLastYear)
+                                )}>
+                                  {formatPercent(center.perfVsLastYear)}
+                                </span>
+                              </div>
+                            </td>
+                            {/* Năm */}
+                            <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.annualPlan)}</td>
+                            <td className="px-1 py-1.5">
+                              <div className="flex items-center gap-1">
+                                <MiniProgress percentage={center.annualCompletion} />
+                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                  getPerformanceTextColor(center.annualCompletion)
+                                )}>
+                                  {formatPercent(center.annualCompletion)}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                          {/* Phong Rows */}
+                          <AnimatePresence initial={false}>
+                            {dashboardTab === 'revenue' && expandedDepts.has(center.id) && center.phongs.map((phong: any) => (
+                              <motion.tr 
+                                key={phong.id} 
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="group hover:bg-zinc-50/50 transition-colors cursor-pointer overflow-hidden" 
+                                onClick={() => {
+                                  setSelectedDeptId(phong.id);
+                                }}
+                              >
+                                <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                                  <div className="flex items-center gap-2 pl-12">
+                                    <div className="w-1 h-1 rounded-full bg-zinc-300" />
+                                    <span className="text-[12px] text-zinc-600 font-normal truncate">{phong.name}</span>
+                                  </div>
+                                </td>
+                                {/* Tháng hiện tại */}
+                                <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(phong.monthActual)}</td>
+                                <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.monthPlan)}</td>
+                                <td className="px-1 py-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <MiniProgress percentage={phong.monthPerfVsPlan} />
+                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                      getPerformanceTextColor(phong.monthPerfVsPlan)
+                                    )}>
+                                      {formatPercent(phong.monthPerfVsPlan)}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.monthLastYear)}</td>
+                                <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                                  <div className="flex items-center gap-1">
+                                    <MiniProgress percentage={phong.monthPerfVsLastYear} />
+                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                      getPerformanceTextColor(phong.monthPerfVsLastYear)
+                                    )}>
+                                      {formatPercent(phong.monthPerfVsLastYear)}
+                                    </span>
+                                  </div>
+                                </td>
+                                {/* Lũy kế */}
+                                <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(phong.actual)}</td>
+                                <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.plan)}</td>
+                                <td className="px-1 py-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <MiniProgress percentage={phong.perfVsPlan} />
+                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                      getPerformanceTextColor(phong.perfVsPlan)
+                                    )}>
+                                      {formatPercent(phong.perfVsPlan)}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.lastYear)}</td>
+                                <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                                  <div className="flex items-center gap-1">
+                                    <MiniProgress percentage={phong.perfVsLastYear} />
+                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                      getPerformanceTextColor(phong.perfVsLastYear)
+                                    )}>
+                                      {formatPercent(phong.perfVsLastYear)}
+                                    </span>
+                                  </div>
+                                </td>
+                                {/* Năm */}
+                                <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.annualPlan)}</td>
+                                <td className="px-1 py-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <MiniProgress percentage={phong.annualCompletion} />
+                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                      getPerformanceTextColor(phong.annualCompletion)
+                                    )}>
+                                      {formatPercent(phong.annualCompletion)}
+                                    </span>
+                                  </div>
+                                </td>
+                              </motion.tr>
+                            ))}
+                          </AnimatePresence>
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  </main>
+
+      {/* Google Sheets Integration Modal */}
+      <AnimatePresence>
+        {isGSheetModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden border border-white/20"
+            >
+              <div className="p-8 space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl">
+                      <Cloud size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-zinc-900">Google Sheets</h2>
+                      <p className="text-sm text-zinc-500 font-medium">Kết nối và đồng bộ dữ liệu trực tuyến</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsGSheetModalOpen(false)}
+                    className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-400"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="space-y-4 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-1 h-4 bg-blue-500 rounded-full" />
+                      <h4 className="text-sm font-bold text-zinc-700">Cấu hình Doanh thu</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Google Sheet ID (Doanh thu)</label>
+                      <input 
+                        type="text" 
+                        placeholder="Nhập ID Sheet Doanh thu..."
+                        value={gsheetConfig?.sheetId || ''}
+                        onChange={(e) => {
+                          const newConfig = { ...(gsheetConfig || { autoSync: false, profitSheetId: '' }), sheetId: e.target.value };
+                          setGsheetConfig(newConfig);
+                          dataService.saveGoogleSheetConfig(newConfig);
+                        }}
+                        className="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                      />
+                      {gsheetConfig?.lastSync && (
+                        <p className="text-[10px] text-zinc-400">Đồng bộ cuối: {new Date(gsheetConfig.lastSync).toLocaleString()}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-1 h-4 bg-emerald-500 rounded-full" />
+                      <h4 className="text-sm font-bold text-zinc-700">Cấu hình Lợi nhuận</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Google Sheet ID (Lợi nhuận)</label>
+                      <input 
+                        type="text" 
+                        placeholder="Nhập ID Sheet Lợi nhuận..."
+                        value={gsheetConfig?.profitSheetId || ''}
+                        onChange={(e) => {
+                          const newConfig = { ...(gsheetConfig || { autoSync: false, sheetId: '' }), profitSheetId: e.target.value };
+                          setGsheetConfig(newConfig);
+                          dataService.saveGoogleSheetConfig(newConfig);
+                        }}
+                        className="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
+                      />
+                      {gsheetConfig?.lastProfitSync && (
+                        <p className="text-[10px] text-zinc-400">Đồng bộ cuối: {new Date(gsheetConfig.lastProfitSync).toLocaleString()}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-bold text-zinc-700">Tự động đồng bộ</h4>
+                      <p className="text-xs text-zinc-400">Tự động cập nhật khi mở ứng dụng</p>
+                    </div>
+                    <button 
+                      onClick={() => {
+                        const newConfig = { ...(gsheetConfig || { sheetId: '', profitSheetId: '', autoSync: false }), autoSync: !gsheetConfig?.autoSync };
+                        setGsheetConfig(newConfig);
+                        dataService.saveGoogleSheetConfig(newConfig);
+                      }}
+                      className={cn(
+                        "w-12 h-6 rounded-full transition-all relative",
+                        gsheetConfig?.autoSync ? "bg-zinc-900" : "bg-zinc-300"
+                      )}
+                    >
+                      <div className={cn(
+                        "absolute top-1 w-4 h-4 bg-white rounded-full transition-all",
+                        gsheetConfig?.autoSync ? "left-7" : "left-1"
+                      )} />
+                    </button>
+                  </div>
+                </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={downloadGSheetTemplate}
+                      className="flex items-center justify-center gap-2 py-3 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
+                    >
+                      <Download size={18} />
+                      Tải mẫu Excel
+                    </button>
+                    <button 
+                      onClick={handleSyncGSheet}
+                      disabled={!(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId) || isSyncing}
+                      className={cn(
+                        "flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all shadow-lg",
+                        isSyncing ? "bg-zinc-100 text-zinc-400" : "bg-zinc-900 text-white hover:bg-zinc-800 shadow-zinc-100"
+                      )}
+                    >
+                      <RefreshCw size={18} className={cn(isSyncing && "animate-spin")} />
+                      {isSyncing ? 'Đang đồng bộ...' : `Đồng bộ ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}`}
+                    </button>
+                  </div>
+
+                  {syncStatus && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={cn(
+                        "p-4 rounded-2xl text-xs font-bold flex items-center gap-3",
+                        syncStatus.type === 'success' ? "bg-emerald-50 text-emerald-600 border border-emerald-100" : "bg-rose-50 text-rose-600 border border-rose-100"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-2 h-2 rounded-full",
+                        syncStatus.type === 'success' ? "bg-emerald-500" : "bg-rose-500"
+                      )} />
+                      <p className="flex-1 whitespace-pre-line">{syncStatus.message}</p>
+                      <button onClick={() => setSyncStatus(null)} className="p-1 hover:bg-black/5 rounded-full">
+                        <X size={14} />
+                      </button>
+                    </motion.div>
+                  )}
+
+                  <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 space-y-3">
+                    <div className="flex items-center gap-2 text-blue-600">
+                      <Info size={16} />
+                      <h4 className="font-bold text-xs uppercase tracking-wider">Hướng dẫn chia sẻ</h4>
+                    </div>
+                    <ol className="text-[11px] text-blue-700 space-y-1.5 list-decimal pl-4 leading-relaxed">
+                      <li>Mở Google Sheet của bạn.</li>
+                      <li>Nhấn nút <strong>Chia sẻ (Share)</strong> ở góc trên bên phải.</li>
+                      <li>Ở mục "Quyền truy cập chung", chọn <strong>Bất kỳ ai có liên kết (Anyone with the link)</strong>.</li>
+                      <li>Đảm bảo quyền là <strong>Người xem (Viewer)</strong>.</li>
+                      <li>Copy toàn bộ URL trình duyệt và dán vào ô cấu hình tương ứng.</li>
+                    </ol>
+                    <div className="pt-2 flex gap-2">
+                      <button 
+                        onClick={() => {
+                          const id = gsheetConfig?.sheetId;
+                          if (id) {
+                            const cleanId = id.includes('/d/') ? id.split('/d/')[1].split('/')[0] : id;
+                            window.open(`https://docs.google.com/spreadsheets/d/${cleanId}/export?format=csv`, '_blank');
+                          } else {
+                            alert('Vui lòng nhập ID Sheet Doanh thu trước.');
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-all"
+                      >
+                        Kiểm tra link Doanh thu
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const id = gsheetConfig?.profitSheetId;
+                          if (id) {
+                            const cleanId = id.includes('/d/') ? id.split('/d/')[1].split('/')[0] : id;
+                            window.open(`https://docs.google.com/spreadsheets/d/${cleanId}/export?format=csv`, '_blank');
+                          } else {
+                            alert('Vui lòng nhập ID Sheet Lợi nhuận trước.');
+                          }
+                        }}
+                        className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-all"
+                      >
+                        Kiểm tra link Lợi nhuận
+                      </button>
+                    </div>
+                  </div>
+              </div>
+              
+              <div className="px-8 py-6 bg-zinc-50 flex justify-end">
+                <button 
+                  onClick={() => setIsGSheetModalOpen(false)}
+                  className="px-8 py-3 bg-zinc-900 text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                >
+                  Đóng
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isYearManagementOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden border border-white/20"
+            >
+              <div className="p-8 space-y-8">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-zinc-900 rounded-2xl flex items-center justify-center text-white shadow-xl">
+                      <Settings size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-zinc-900">Quản lý Năm</h2>
+                      <p className="text-sm text-zinc-500 font-medium">Khai báo năm và quản lý dữ liệu hệ thống</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setIsYearManagementOpen(false)}
+                    className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-400"
+                  >
+                    <ChevronDown size={24} className="rotate-90" />
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Danh sách năm đã khai báo</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {availableYears.map(year => (
+                        <div 
+                          key={year}
+                          className={cn(
+                            "relative px-4 py-3 rounded-2xl border-2 flex flex-col items-center justify-center gap-1 transition-all group",
+                            selectedYear === year 
+                              ? "bg-zinc-900 border-zinc-900 text-white shadow-lg" 
+                              : "bg-white border-zinc-100 text-zinc-600"
+                          )}
+                        >
+                          <span className="text-lg font-bold">{year}</span>
+                          {year === currentYear && (
+                            <span className={cn(
+                              "text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter",
+                              selectedYear === year ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-500"
+                            )}>
+                              Hiện tại
+                            </span>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteYear(year);
+                            }}
+                            className="absolute -top-2 -right-2 p-1.5 bg-rose-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                            title="Xóa năm"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                      <button 
+                        onClick={() => handleAddYear()}
+                        className="px-4 py-3 rounded-2xl border-2 border-dashed border-zinc-200 text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-all flex flex-col items-center justify-center gap-1"
+                      >
+                        <TableIcon size={20} />
+                        <span className="text-[10px] font-bold uppercase">Thêm năm</span>
+                      </button>
+                    </div>
+                </div>
+
+                <div className="pt-6 border-t border-zinc-100 space-y-4">
+                    <div className="p-4 bg-rose-50 rounded-2xl border border-rose-100 space-y-3">
+                      <div className="flex items-center gap-3 text-rose-600">
+                        <Info size={18} />
+                        <h4 className="font-bold text-sm">Vùng nguy hiểm</h4>
+                      </div>
+                      <p className="text-xs text-rose-500 leading-relaxed font-medium">
+                        Các hành động dưới đây sẽ xóa dữ liệu vĩnh viễn và không thể khôi phục.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <button 
+                          onClick={handleResetCurrentYear}
+                          className="py-3 bg-white border border-rose-200 text-rose-600 rounded-xl text-sm font-bold hover:bg-rose-50 transition-all"
+                        >
+                          Reset năm {selectedYear}
+                        </button>
+                        <button 
+                          onClick={handleClearAllData}
+                          className="py-3 bg-rose-600 text-white rounded-xl text-sm font-bold hover:bg-rose-700 transition-all shadow-lg shadow-rose-200"
+                        >
+                          Xóa tất cả các năm
+                        </button>
+                      </div>
+                    </div>
+                </div>
+              </div>
+              
+              <div className="px-8 py-6 bg-zinc-50 flex justify-end">
+                <button 
+                  onClick={() => setIsYearManagementOpen(false)}
+                  className="px-8 py-3 bg-zinc-900 text-white rounded-xl text-sm font-bold hover:bg-zinc-800 transition-all shadow-lg shadow-zinc-200"
+                >
+                  Hoàn tất
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Dept Selector Modal */}
+      <AnimatePresence>
+        {isDeptMenuOpen && (
+          <>
+            <div className="fixed inset-0 z-50 bg-zinc-900/20 backdrop-blur-sm" onClick={() => setIsDeptMenuOpen(false)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-md bg-white rounded-3xl shadow-2xl border border-zinc-100 p-6"
+            >
+              <h3 className="text-lg font-bold mb-4">Chọn bộ phận xem chi tiết</h3>
+              <div className="grid grid-cols-1 gap-2">
+                {cumulativeOverview.filter(d => d.type === 'company').map(company => (
+                  <div key={company.id} className="space-y-1">
+                    <button
+                      onClick={() => {
+                        setSelectedDeptId(company.id);
+                        setIsDeptMenuOpen(false);
+                      }}
+                      className={cn(
+                        "w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all",
+                        selectedDeptId === company.id 
+                          ? "bg-zinc-900 text-white shadow-lg" 
+                          : "text-zinc-600 hover:bg-zinc-100"
+                      )}
+                    >
+                      {company.name}
+                    </button>
+                    
+                    {/* Bans */}
+                    {cumulativeOverview.filter(d => d.type === 'ban').map(ban => (
+                      <button
+                        key={ban.id}
+                        onClick={() => {
+                          setSelectedDeptId(ban.id);
+                          setIsDeptMenuOpen(false);
+                        }}
+                        className={cn(
+                          "w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all ml-4 w-[calc(100%-1rem)]",
+                          selectedDeptId === ban.id 
+                            ? "bg-amber-500 text-white shadow-lg" 
+                            : "text-zinc-600 hover:bg-zinc-100"
+                        )}
+                      >
+                        {ban.name}
+                      </button>
+                    ))}
+
+                    {/* Centers */}
+                    {cumulativeOverview.filter(d => d.type === 'center').map(center => (
+                      <div key={center.id} className="space-y-1">
+                        <button
+                          onClick={() => {
+                            setSelectedDeptId(center.id);
+                            setIsDeptMenuOpen(false);
+                          }}
+                          className={cn(
+                            "w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all ml-4 w-[calc(100%-1rem)]",
+                            selectedDeptId === center.id 
+                              ? "bg-blue-500 text-white shadow-lg" 
+                              : "text-zinc-600 hover:bg-zinc-100"
+                          )}
+                        >
+                          {center.name}
+                        </button>
+                        
+                        {/* Phongs */}
+                        {cumulativeOverview.filter(d => d.parentId === center.id).map(phong => (
+                          <button
+                            key={phong.id}
+                            onClick={() => {
+                              setSelectedDeptId(phong.id);
+                              setIsDeptMenuOpen(false);
+                            }}
+                            className={cn(
+                              "w-full text-left px-4 py-3 rounded-xl text-sm font-bold transition-all ml-8 w-[calc(100%-2rem)]",
+                              selectedDeptId === phong.id 
+                                ? "bg-zinc-400 text-white shadow-lg" 
+                                : "text-zinc-500 hover:bg-zinc-100"
+                            )}
+                          >
+                            {phong.name}
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Data Entry Modal */}
+      <AnimatePresence>
+        {isDataEntryOpen && (
+          <DataEntry 
+            data={allDepts} 
+            year={selectedYear}
+            initialTab={dashboardTab}
+            onSave={handleSaveData} 
+            onClose={() => setIsDataEntryOpen(false)} 
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Footer */}
+      <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-zinc-200">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-zinc-400 text-sm">
+          <p>© 2026 Corporate Analytics System. All rights reserved.</p>
+          <div className="flex items-center gap-6">
+            <a href="#" className="hover:text-zinc-600 transition-colors">Báo cáo chi tiết</a>
+            <a href="#" className="hover:text-zinc-600 transition-colors">Cài đặt hệ thống</a>
+            <a href="#" className="hover:text-zinc-600 transition-colors">Trợ giúp</a>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}

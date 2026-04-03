@@ -4,6 +4,9 @@ export interface MonthlyData {
   actual: number;
   plan: number;
   lastYear: number;
+  profitActual?: number;
+  profitPlan?: number;
+  profitLastYear?: number;
 }
 
 export interface DepartmentData {

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { X, Plus, Trash2, Save, AlertCircle, Download, Upload, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DepartmentData, MonthlyData } from '../types';
@@ -6,50 +6,75 @@ import { cn, formatNumber } from '../utils';
 
 interface DataEntryProps {
   data: DepartmentData[];
+  year: number;
+  initialTab?: 'revenue' | 'profit';
   onSave: (newData: DepartmentData[]) => void;
   onClose: () => void;
 }
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) => {
+export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = 'revenue', onSave, onClose }) => {
   const [localData, setLocalData] = useState<DepartmentData[]>(JSON.parse(JSON.stringify(data)));
   const [activeDeptId, setActiveDeptId] = useState(data[0]?.id || 'all');
+  const [entryTab, setEntryTab] = useState<'revenue' | 'profit'>(initialTab);
+
+  // Sync with external data changes (e.g. from Google Sheets sync)
+  useEffect(() => {
+    setLocalData(JSON.parse(JSON.stringify(data)));
+  }, [data]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const activeDeptIndex = localData.findIndex(d => d.id === activeDeptId);
   const activeDept = localData[activeDeptIndex] || localData[0];
 
-  const isParent = activeDept.type === 'company' || activeDept.type === 'center';
+  const isParent = entryTab === 'revenue' 
+    ? (activeDept.type === 'company' || activeDept.type === 'center')
+    : false; // In profit tab, we allow editing centers directly as they are the leaf nodes for profit
 
   const recalculateTotals = (data: DepartmentData[]) => {
     const newData = JSON.parse(JSON.stringify(data));
     
-    const aggregate = (parentId: string) => {
-      let children = newData.filter((d: any) => d.parentId === parentId);
-      
-      // If aggregating for Company, only include 'ban' types
-      if (parentId === 'all') {
-        children = children.filter((d: any) => d.type === 'ban');
-      }
-
-      const parent = newData.find((d: any) => d.id === parentId);
-      if (!parent) return;
-
-      parent.monthly = months.map((month: string, index: number) => {
-        const actual = children.reduce((sum: number, c: any) => sum + c.monthly[index].actual, 0);
-        const plan = children.reduce((sum: number, c: any) => sum + c.monthly[index].plan, 0);
-        const lastYear = children.reduce((sum: number, c: any) => sum + c.monthly[index].lastYear, 0);
-        return { month, actual, plan, lastYear };
-      });
-    };
-
-    // 1. Aggregate Phongs to Centers
+    // 1. Aggregate Revenue (Actual/Plan/LastYear) from Phongs to Centers
     const centers = newData.filter((d: any) => d.type === 'center');
-    centers.forEach((c: any) => aggregate(c.id));
+    centers.forEach((center: any) => {
+      const phongs = newData.filter((d: any) => d.parentId === center.id);
+      center.monthly = months.map((month: string, index: number) => {
+        const actual = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+        const plan = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+        const lastYear = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
+        
+        // Keep existing profit data for centers as it's entered directly in Profit tab
+        return { 
+          ...center.monthly[index],
+          actual, 
+          plan, 
+          lastYear
+        };
+      });
+    });
     
-    // 2. Aggregate Centers and Bans to Company
-    aggregate('all');
+    // 2. Aggregate Company (both Revenue and Profit)
+    const company = newData.find((d: any) => d.id === 'all');
+    if (company) {
+      const children = newData.filter((d: any) => d.parentId === 'all');
+      company.monthly = months.map((month: string, index: number) => {
+        // Revenue: Only from Bans
+        const bans = children.filter((d: any) => d.type === 'ban');
+        const actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+        const plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+        const lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
+
+        // Profit: Only from Centers
+        const centers = children.filter((d: any) => d.type === 'center');
+        const profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
+        const profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
+        const profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
+        
+        return { month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear };
+      });
+    }
 
     return newData;
   };
@@ -57,6 +82,16 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
   const sortedDepts = useMemo(() => {
     const result: DepartmentData[] = [];
     const company = localData.find(d => d.type === 'company');
+    
+    if (entryTab === 'profit') {
+      // For profit, only show company and centers
+      if (company) result.push(company);
+      const centers = localData.filter(d => d.type === 'center');
+      result.push(...centers);
+      return result;
+    }
+
+    // For revenue, show everything
     if (company) result.push(company);
 
     const centers = localData.filter(d => d.type === 'center');
@@ -77,22 +112,34 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
     });
 
     return result;
-  }, [localData]);
+  }, [localData, entryTab]);
+
+  // Ensure activeDeptId is valid for the current tab
+  useEffect(() => {
+    const isValid = sortedDepts.some(d => d.id === activeDeptId);
+    if (!isValid && sortedDepts.length > 0) {
+      setActiveDeptId(sortedDepts[0].id);
+    }
+  }, [entryTab, sortedDepts, activeDeptId]);
 
   const handleValueChange = (monthIndex: number, field: keyof Omit<MonthlyData, 'month'>, value: string) => {
     if (isParent) return; // Prevent editing parent data
 
-    // Remove all dots to get the raw numeric string
-    const rawValue = value.replace(/\./g, '');
+    // Remove all dots (thousands) and replace comma with dot (decimal)
+    const rawValue = value.replace(/\./g, '').replace(',', '.');
     
     let numValue = 0;
     if (rawValue !== '') {
-      numValue = parseInt(rawValue, 10);
+      numValue = parseFloat(rawValue);
       if (isNaN(numValue)) return;
     }
 
     const newData = [...localData];
-    newData[activeDeptIndex].monthly[monthIndex][field] = numValue;
+    const targetField = entryTab === 'profit' 
+      ? (field === 'actual' ? 'profitActual' : field === 'plan' ? 'profitPlan' : 'profitLastYear')
+      : field;
+    
+    (newData[activeDeptIndex].monthly[monthIndex] as any)[targetField] = numValue;
     
     // Recalculate all totals
     const aggregatedData = recalculateTotals(newData);
@@ -110,7 +157,15 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
       name: 'Bộ phận mới',
       type: 'phong',
       parentId: 'tmc', // Default to TMC center for new phongs
-      monthly: months.map(m => ({ month: m, actual: 0, plan: 0, lastYear: 0 }))
+      monthly: months.map(m => ({ 
+        month: m, 
+        actual: 0, 
+        plan: 0, 
+        lastYear: 0,
+        profitActual: 0,
+        profitPlan: 0,
+        profitLastYear: 0
+      }))
     };
     const newData = [...localData, newDept];
     const aggregatedData = recalculateTotals(newData);
@@ -131,9 +186,12 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
   const downloadTemplate = () => {
     const templateData = months.map(m => ({
       'Tháng': m,
-      'Thực tế (Năm nay)': 0,
-      'Kế hoạch (Năm nay)': 0,
-      'Thực tế (Năm trước)': 0
+      'Doanh thu Thực tế': 0,
+      'Doanh thu Kế hoạch': 0,
+      'Doanh thu Cùng kỳ': 0,
+      'Lợi nhuận Thực tế': 0,
+      'Lợi nhuận Kế hoạch': 0,
+      'Lợi nhuận Cùng kỳ': 0
     }));
 
     const ws = XLSX.utils.json_to_sheet(templateData);
@@ -161,12 +219,21 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
         const monthName = row['Tháng'];
         const mIdx = months.indexOf(monthName);
         if (mIdx !== -1) {
-          currentMonthly[mIdx] = {
-            month: monthName,
-            actual: parseInt(row['Thực tế (Năm nay)']) || 0,
-            plan: parseInt(row['Kế hoạch (Năm nay)']) || 0,
-            lastYear: parseInt(row['Thực tế (Năm trước)']) || 0
-          };
+          if (entryTab === 'revenue') {
+            currentMonthly[mIdx] = {
+              ...currentMonthly[mIdx],
+              actual: parseInt(row['Doanh thu Thực tế'] || row['Thực tế (Năm nay)']) || 0,
+              plan: parseInt(row['Doanh thu Kế hoạch'] || row['Kế hoạch (Năm nay)']) || 0,
+              lastYear: parseInt(row['Doanh thu Cùng kỳ'] || row['Thực tế (Năm trước)']) || 0
+            };
+          } else {
+            currentMonthly[mIdx] = {
+              ...currentMonthly[mIdx],
+              profitActual: parseInt(row['Lợi nhuận Thực tế']) || 0,
+              profitPlan: parseInt(row['Lợi nhuận Kế hoạch']) || 0,
+              profitLastYear: parseInt(row['Lợi nhuận Cùng kỳ']) || 0
+            };
+          }
         }
       });
 
@@ -180,12 +247,28 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
     reader.readAsBinaryString(file);
   };
 
+  const handleResetLocalData = () => {
+    if (confirm(`Bạn có chắc chắn muốn xóa tất cả số liệu đang nhập của năm ${year}?`)) {
+      const resetData = localData.map(dept => ({
+        ...dept,
+        monthly: dept.monthly.map(m => ({ 
+          ...m, 
+          actual: 0, plan: 0, lastYear: 0,
+          profitActual: 0, profitPlan: 0, profitLastYear: 0
+        }))
+      }));
+      setLocalData(resetData);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/50 backdrop-blur-sm">
       <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col">
         <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
           <div>
-            <h2 className="text-xl font-bold text-zinc-900">Khai báo số liệu</h2>
+            <h2 className="text-xl font-bold text-zinc-900">
+              Khai báo {entryTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'} - Năm {year}
+            </h2>
             <p className="text-sm text-zinc-500">Thiết lập bộ phận và kế hoạch/thực tế các tháng</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-zinc-200 rounded-full transition-colors">
@@ -211,7 +294,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                   >
                     {dept.name}
                   </button>
-                  {dept.id !== 'all' && (
+                  {dept.id !== 'all' && entryTab === 'revenue' && (
                     <button 
                       onClick={() => removeDepartment(dept.id)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-rose-500 opacity-0 group-hover:opacity-100 hover:bg-rose-50 rounded-lg transition-all"
@@ -221,18 +304,68 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                   )}
                 </div>
               ))}
-              <button 
-                onClick={addDepartment}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-zinc-200 rounded-xl text-sm font-bold text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-all"
-              >
-                <Plus size={16} />
-                Thêm bộ phận
-              </button>
+              {entryTab === 'revenue' && (
+                <button 
+                  onClick={addDepartment}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-zinc-200 rounded-xl text-sm font-bold text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-all"
+                >
+                  <Plus size={16} />
+                  Thêm bộ phận
+                </button>
+              )}
             </div>
           </div>
 
           {/* Main Content: Monthly Data Table */}
           <div className="flex-1 p-6 overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-xl">
+                <button
+                  onClick={() => setEntryTab('revenue')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+                    entryTab === 'revenue' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                  )}
+                >
+                  Doanh thu
+                </button>
+                <button
+                  onClick={() => setEntryTab('profit')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+                    entryTab === 'profit' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                  )}
+                >
+                  Lợi nhuận
+                </button>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={downloadTemplate}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
+                  title="Tải mẫu Excel"
+                >
+                  <Download size={18} />
+                  Mẫu Excel
+                </button>
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl text-sm font-bold text-emerald-600 hover:bg-emerald-100 transition-all"
+                  title="Nhập từ Excel"
+                >
+                  <Upload size={18} />
+                  Nhập Excel
+                </button>
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleImport} 
+                  accept=".xlsx, .xls" 
+                  className="hidden" 
+                />
+              </div>
+            </div>
+
             <div className="space-y-6 mb-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-1">
@@ -245,7 +378,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                     className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
                   />
                 </div>
-                {activeDept.id !== 'all' && (
+                {activeDept.id !== 'all' && entryTab === 'revenue' && (
                   <>
                     <div>
                       <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Loại</label>
@@ -282,31 +415,6 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                   </>
                 )}
               </div>
-              <div className="flex gap-2 justify-end">
-                <button 
-                  onClick={downloadTemplate}
-                  className="flex items-center gap-2 px-4 py-3 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
-                  title="Tải mẫu Excel"
-                >
-                  <Download size={18} />
-                  Mẫu Excel
-                </button>
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-100 rounded-xl text-sm font-bold text-emerald-600 hover:bg-emerald-100 transition-all"
-                  title="Nhập từ Excel"
-                >
-                  <Upload size={18} />
-                  Nhập Excel
-                </button>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  onChange={handleImport} 
-                  accept=".xlsx, .xls" 
-                  className="hidden" 
-                />
-              </div>
             </div>
 
             {isParent && (
@@ -324,9 +432,9 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                 <thead className="bg-zinc-100 text-zinc-900 font-bold uppercase text-[11px] tracking-widest border-b border-zinc-200">
                   <tr>
                     <th className="px-4 py-4">Tháng</th>
-                    <th className="px-4 py-4 text-right">Thực tế (Năm nay)</th>
-                    <th className="px-4 py-4 text-right">Kế hoạch (Năm nay)</th>
-                    <th className="px-4 py-4 text-right">Thực tế (Năm trước)</th>
+                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Thực tế' : 'Thực tế'} ({year})</th>
+                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Kế hoạch' : 'Kế hoạch'} ({year})</th>
+                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Cùng kỳ' : 'Thực tế'} ({year - 1})</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
@@ -336,7 +444,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                       <td className="px-4 py-3">
                         <input 
                           type="text" 
-                          value={m.actual === 0 ? '0' : formatNumber(m.actual)}
+                          value={(entryTab === 'profit' ? (m.profitActual || 0) : m.actual) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitActual || 0) : m.actual)}
                           onChange={(e) => handleValueChange(idx, 'actual', e.target.value)}
                           disabled={isParent}
                           className={cn(
@@ -350,7 +458,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                       <td className="px-4 py-3">
                         <input 
                           type="text" 
-                          value={m.plan === 0 ? '0' : formatNumber(m.plan)}
+                          value={(entryTab === 'profit' ? (m.profitPlan || 0) : m.plan) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitPlan || 0) : m.plan)}
                           onChange={(e) => handleValueChange(idx, 'plan', e.target.value)}
                           disabled={isParent}
                           className={cn(
@@ -364,7 +472,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
                       <td className="px-4 py-3">
                         <input 
                           type="text" 
-                          value={m.lastYear === 0 ? '0' : formatNumber(m.lastYear)}
+                          value={(entryTab === 'profit' ? (m.profitLastYear || 0) : m.lastYear) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitLastYear || 0) : m.lastYear)}
                           onChange={(e) => handleValueChange(idx, 'lastYear', e.target.value)}
                           disabled={isParent}
                           className={cn(
@@ -384,6 +492,12 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, onSave, onClose }) =
         </div>
 
         <div className="px-6 py-4 border-t border-zinc-100 flex items-center justify-end gap-3 bg-zinc-50">
+          <button 
+            onClick={handleResetLocalData}
+            className="px-6 py-2.5 bg-rose-50 text-rose-600 rounded-xl text-sm font-bold hover:bg-rose-100 transition-all"
+          >
+            Reset số liệu
+          </button>
           <button 
             onClick={onClose}
             className="px-6 py-2.5 text-sm font-bold text-zinc-500 hover:text-zinc-900 transition-colors"

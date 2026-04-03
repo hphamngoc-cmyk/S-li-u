@@ -16,28 +16,28 @@ export const StatCard: React.FC<StatCardProps> = ({ title, value, targetValue, t
   const isPositive = percentage >= 100;
 
   return (
-    <div className={cn("p-6 rounded-2xl border border-zinc-200 bg-white shadow-sm transition-all hover:shadow-md", className)}>
-      <div className="flex justify-between items-start mb-5">
+    <div className={cn("p-4 rounded-xl border border-zinc-200 bg-white shadow-sm transition-all hover:shadow-md", className)}>
+      <div className="flex justify-between items-start mb-3">
         <div>
-          <p className="text-lg font-medium text-zinc-500 mb-1.5">{title}</p>
-          <h3 className="text-4xl font-bold text-zinc-900">{formatNumber(value)}</h3>
+          <p className="text-xs font-bold text-zinc-500 mb-0.5 uppercase tracking-wider">{title}</p>
+          <h3 className="text-2xl font-bold text-zinc-900">{formatNumber(value)}</h3>
         </div>
-        <div className={cn("px-3 py-1.5 rounded-full text-base font-bold border flex items-center gap-1.5", colorClass)}>
-          {isPositive ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+        <div className={cn("px-2 py-1 rounded-full text-xs font-bold border flex items-center gap-1", colorClass)}>
+          {isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
           {formatPercent(percentage)}
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between text-base">
-          <div className="flex items-center gap-2 text-zinc-500">
-            {type === 'plan' ? <Target size={18} /> : <Calendar size={18} />}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5 text-zinc-500 font-medium">
+            {type === 'plan' ? <Target size={14} /> : <Calendar size={14} />}
             <span>{type === 'plan' ? 'Kế hoạch' : 'Cùng kỳ'}</span>
           </div>
           <span className="font-bold text-zinc-700">{formatNumber(targetValue)}</span>
         </div>
         
-        <div className="w-full h-2.5 bg-zinc-100 rounded-full overflow-hidden">
+        <div className="w-full h-1.5 bg-zinc-100 rounded-full overflow-hidden">
           <div 
             className={cn("h-full transition-all duration-1000", 
               percentage >= 100 ? "bg-emerald-500" : percentage >= 80 ? "bg-amber-500" : "bg-rose-500"

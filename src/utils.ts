@@ -19,11 +19,35 @@ export const getPerformanceBadgeColor = (percentage: number | null | undefined) 
   return 'bg-rose-500';
 };
 
+export const getPerformanceTextColor = (percentage: number | null | undefined) => {
+  if (percentage === null || percentage === undefined || isNaN(percentage) || !isFinite(percentage)) return 'text-zinc-400';
+  if (percentage >= 100) return 'text-emerald-600';
+  if (percentage >= 80) return 'text-amber-600';
+  return 'text-rose-600';
+};
+
 export const formatNumber = (num: number) => {
-  return new Intl.NumberFormat('vi-VN').format(num);
+  if (num < 0) {
+    return `(${new Intl.NumberFormat('vi-VN', {
+      maximumFractionDigits: 2
+    }).format(Math.abs(num))})`;
+  }
+  return new Intl.NumberFormat('vi-VN', {
+    maximumFractionDigits: 2
+  }).format(num);
+};
+
+export const calculatePerformance = (actual: number, target: number) => {
+  if (target === 0) return null;
+  // Standard formula for performance that handles negative numbers
+  // Performance = 1 + (Actual - Target) / |Target|
+  return (1 + (actual - target) / Math.abs(target)) * 100;
 };
 
 export const formatPercent = (num: number | null | undefined) => {
   if (num === null || num === undefined || isNaN(num) || !isFinite(num)) return '';
-  return `${num.toFixed(1)}%`;
+  return new Intl.NumberFormat('vi-VN', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1
+  }).format(num) + '%';
 };
