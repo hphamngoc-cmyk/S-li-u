@@ -13,7 +13,7 @@ export interface DepartmentData {
   id: string;
   name: string;
   parentId?: string;
-  type: 'company' | 'center' | 'ban' | 'phong';
+  type: 'company' | 'center' | 'ban' | 'phong' | 'product';
   monthly: MonthlyData[];
 }
 

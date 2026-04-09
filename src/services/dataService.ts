@@ -10,8 +10,10 @@ const GOOGLE_SHEET_CONFIG_KEY = 'corporate_dashboard_gsheet_config';
 export interface GoogleSheetConfig {
   sheetId: string; // Revenue sheet
   profitSheetId?: string; // Profit sheet
+  productSheetId?: string; // Product sheet
   lastSync?: string;
   lastProfitSync?: string;
+  lastProductSync?: string;
   autoSync: boolean;
 }
 
@@ -59,6 +61,10 @@ const generateInitialData = (year: number): DepartmentData[] => {
     { id: 'nura_hcm_hunt2', name: 'HUNT2', type: 'phong', parentId: 'nura_hcm' },
     { id: 'nura_hcm_partnership', name: 'PARTNERSHIP', type: 'phong', parentId: 'nura_hcm' },
     { id: 'nura_hcm_farm', name: 'FARM', type: 'phong', parentId: 'nura_hcm' },
+    // Products under TMC
+    { id: 'tmc_prod1', name: 'SẢN PHẨM A', type: 'product', parentId: 'tmc' },
+    { id: 'tmc_prod2', name: 'SẢN PHẨM B', type: 'product', parentId: 'tmc' },
+    { id: 'tmc_prod3', name: 'SẢN PHẨM C', type: 'product', parentId: 'tmc' },
   ];
 
   const result: DepartmentData[] = rawData.map(d => ({
@@ -166,7 +172,7 @@ export const dataService = {
     localStorage.setItem(GOOGLE_SHEET_CONFIG_KEY, JSON.stringify(config));
   },
 
-  fetchFromGoogleSheet: async (sheetId: string, type: 'revenue' | 'profit' = 'revenue'): Promise<{ years: number[], dataByYear: Record<number, DepartmentData[]> }> => {
+  fetchFromGoogleSheet: async (sheetId: string, type: 'revenue' | 'profit' | 'product' = 'revenue'): Promise<{ years: number[], dataByYear: Record<number, DepartmentData[]>, updatedDeptIdsByYear: Record<number, Set<string>> }> => {
     // Extract ID and GID from URL if present
     let cleanId = sheetId.trim();
     let gid = '0';
@@ -174,7 +180,13 @@ export const dataService = {
     if (sheetId.includes('/d/')) {
       const parts = sheetId.split('/d/');
       if (parts[1]) {
-        cleanId = parts[1].split('/')[0];
+        const idPart = parts[1].split('/')[0];
+        // Handle /d/e/ format for published sheets
+        if (idPart === 'e' && parts[1].split('/')[1]) {
+          cleanId = parts[1].split('/')[1];
+        } else {
+          cleanId = idPart;
+        }
       }
     }
     
@@ -187,26 +199,42 @@ export const dataService = {
       `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?tqx=out:csv&gid=${gid}`,
       `https://docs.google.com/spreadsheets/d/${cleanId}/pub?output=csv&gid=${gid}`
     ];
+
+    // If it's already a direct CSV link, try it first
+    if (sheetId.includes('format=csv') || sheetId.includes('output=csv')) {
+      urls.unshift(sheetId);
+    }
     
     let lastError: any = null;
     let csvText = '';
 
+    console.log(`Attempting to fetch ${type} data from Google Sheet. ID: ${cleanId}, GID: ${gid}`);
+
     for (const url of urls) {
       try {
+        console.log(`Trying URL: ${url}`);
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
 
         const response = await fetch(url, { signal: controller.signal });
         clearTimeout(timeoutId);
 
-        if (!response.ok) continue;
+        if (!response.ok) {
+          console.warn(`URL failed with status: ${response.status}`);
+          continue;
+        }
         
         const text = await response.text();
-        if (text.includes('<!DOCTYPE html>') || text.includes('login')) continue;
+        if (text.includes('<!DOCTYPE html>') || text.includes('login')) {
+          console.warn(`URL returned HTML instead of CSV. Likely permission issue.`);
+          continue;
+        }
         
         csvText = text;
+        console.log(`Successfully fetched CSV data from ${url}`);
         break; // Found a working URL
       } catch (e: any) {
+        console.error(`Error fetching from ${url}:`, e);
         if (e.name === 'AbortError') {
           lastError = new Error('Yêu cầu quá hạn (Timeout). Vui lòng kiểm tra kết nối mạng.');
         } else {
@@ -217,9 +245,11 @@ export const dataService = {
 
     if (!csvText) {
       if (lastError?.name === 'TypeError' && lastError?.message === 'Failed to fetch') {
-        throw new Error(`Không thể kết nối tới Google Sheet ${type === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}.\n\nLƯU Ý QUAN TRỌNG:\n1. Bạn PHẢI nhấn nút "Chia sẻ" (Share) -> "Bất kỳ ai có liên kết" (Anyone with the link) -> "Người xem" (Viewer).\n2. Nếu đã chia sẻ mà vẫn lỗi, hãy thử "Xuất bản lên web" (File -> Share -> Publish to web) và dán link vào đây.\n3. Đảm bảo ID Sheet chính xác.`);
+        const sheetName = type === 'revenue' ? 'Doanh thu' : type === 'profit' ? 'Lợi nhuận' : 'Sản phẩm';
+        throw new Error(`Không thể kết nối tới Google Sheet ${sheetName}.\n\nLƯU Ý QUAN TRỌNG:\n1. Bạn PHẢI nhấn nút "Chia sẻ" (Share) -> "Bất kỳ ai có liên kết" (Anyone with the link) -> "Người xem" (Viewer).\n2. Nếu đã chia sẻ mà vẫn lỗi, hãy thử "Xuất bản lên web" (File -> Share -> Publish to web) và dán link vào đây.\n3. Đảm bảo ID Sheet chính xác.`);
       }
-      throw lastError || new Error(`Không thể tải dữ liệu ${type === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}. Vui lòng kiểm tra lại quyền chia sẻ.`);
+      const sheetName = type === 'revenue' ? 'Doanh thu' : type === 'profit' ? 'Lợi nhuận' : 'Sản phẩm';
+      throw lastError || new Error(`Không thể tải dữ liệu ${sheetName}. Vui lòng kiểm tra lại quyền chia sẻ.`);
     }
 
     const lines = csvText.split('\n').map(line => {
@@ -246,6 +276,7 @@ export const dataService = {
     const headers = lines[0].map(h => h.toLowerCase().replace(/\s/g, ''));
     const yearIdx = headers.findIndex(h => h.includes('year') || h.includes('năm'));
     const deptIdIdx = headers.findIndex(h => h.includes('deptid') || h.includes('mãbộphận') || h.includes('id'));
+    const nameIdx = headers.findIndex(h => h.includes('name') || h.includes('tên'));
     const monthIdx = headers.findIndex(h => h.includes('month') || h.includes('tháng'));
     const actualIdx = headers.findIndex(h => h.includes('actual') || h.includes('thựctế'));
     const planIdx = headers.findIndex(h => h.includes('plan') || h.includes('kếhoạch') || h.includes('kh'));
@@ -254,11 +285,12 @@ export const dataService = {
     const profitPlanIdx = headers.findIndex(h => h.includes('profitplan') || h.includes('lợinhuậnkếhoạch') || h.includes('lnkh'));
     const profitLastYearIdx = headers.findIndex(h => h.includes('profitlastyear') || h.includes('lợinhuậncùngkỳ') || h.includes('lnck'));
 
-    if (yearIdx === -1 || deptIdIdx === -1 || monthIdx === -1) {
-      throw new Error('Cấu trúc file không đúng. Cần có các cột: Year, DeptID, Month, Actual, Plan, LastYear');
+    if (yearIdx === -1 || (deptIdIdx === -1 && nameIdx === -1) || monthIdx === -1) {
+      throw new Error('Cấu trúc file không đúng. Cần có các cột: Year, DeptID (hoặc Name), Month, Actual, Plan, LastYear');
     }
 
     const dataByYear: Record<number, DepartmentData[]> = {};
+    const updatedDeptIdsByYear: Record<number, Set<string>> = {};
     const yearsSet = new Set<number>();
 
     const getMonthIndex = (val: string): number => {
@@ -291,32 +323,7 @@ export const dataService = {
 
     const parseLocaleNumber = (val: string): number => {
       if (!val) return 0;
-      // Remove all dots (thousands)
-      // Replace comma with dot (decimal)
       let clean = val.trim();
-      
-      // If it looks like 1.000,50
-      if (clean.includes(',') && clean.includes('.')) {
-        clean = clean.replace(/\./g, '').replace(',', '.');
-      } 
-      // If it only has a comma, it's likely the decimal separator (e.g. 1000,5)
-      else if (clean.includes(',')) {
-        clean = clean.replace(',', '.');
-      }
-      // If it only has a dot, it could be a decimal or a thousands separator
-      // In standard CSV it's a decimal. But if the user typed 1.000 it's thousands.
-      // Usually, if there are 3 digits after the dot, it's likely thousands in this context.
-      // However, to be safe, we'll assume standard CSV dot decimal unless it's clearly thousands.
-      // Actually, if we remove dots first, we might break 10.5 -> 105.
-      
-      // Better approach: 
-      // If there's a comma, it's definitely the decimal separator.
-      // If there's no comma, but there's a dot:
-      // - If it's like "1.000" (exactly 3 digits after dot), it's ambiguous.
-      // - But the user explicitly said "use . for thousands".
-      
-      // Let's stick to: dots are thousands, commas are decimals.
-      // If no comma exists, we check if the dot is followed by 3 digits.
       
       const hasComma = val.includes(',');
       const hasDot = val.includes('.');
@@ -324,7 +331,6 @@ export const dataService = {
       if (hasComma) {
         return parseFloat(val.replace(/\./g, '').replace(',', '.')) || 0;
       } else if (hasDot) {
-        // If it's like "1.234" it's likely 1234. If it's "1.2" it's likely 1.2
         const parts = val.split('.');
         if (parts[parts.length - 1].length === 3) {
           return parseFloat(val.replace(/\./g, '')) || 0;
@@ -341,7 +347,8 @@ export const dataService = {
       if (row.length < 3 || !row[yearIdx]) continue;
 
       const year = parseInt(row[yearIdx]);
-      const deptId = row[deptIdIdx]?.trim();
+      const deptId = deptIdIdx !== -1 ? row[deptIdIdx]?.trim() : '';
+      const nameValue = nameIdx !== -1 ? row[nameIdx]?.trim() : '';
       const monthName = row[monthIdx]?.trim();
       const actual = parseLocaleNumber(row[actualIdx]);
       const plan = parseLocaleNumber(row[planIdx]);
@@ -350,18 +357,60 @@ export const dataService = {
       const profitPlan = profitPlanIdx !== -1 ? parseLocaleNumber(row[profitPlanIdx]) : 0;
       const profitLastYear = profitLastYearIdx !== -1 ? parseLocaleNumber(row[profitLastYearIdx]) : 0;
 
-      if (isNaN(year) || !deptId) continue;
+      if (isNaN(year) || (!deptId && !nameValue)) continue;
       yearsSet.add(year);
 
       if (!dataByYear[year]) {
-        dataByYear[year] = generateInitialData(year);
+        // Use existing data if available, otherwise use initial data
+        const storageKey = `${STORAGE_PREFIX}${year}`;
+        const existing = localStorage.getItem(storageKey);
+        if (existing) {
+          dataByYear[year] = JSON.parse(existing);
+        } else {
+          dataByYear[year] = generateInitialData(year);
+        }
+        updatedDeptIdsByYear[year] = new Set<string>();
       }
 
-      const dept = dataByYear[year].find(d => d.id.toLowerCase() === deptId.toLowerCase());
+      // Try matching by ID first, then by Name
+      let dept = dataByYear[year].find(d => d.id.toLowerCase() === deptId.toLowerCase());
+      if (!dept && nameValue) {
+        dept = dataByYear[year].find(d => d.name.toLowerCase() === nameValue.toLowerCase());
+      }
+      if (!dept && deptId) {
+        dept = dataByYear[year].find(d => d.name.toLowerCase() === deptId.toLowerCase());
+      }
+
+      // If still not found and it's a product sync, create a new product
+      if (!dept && type === 'product') {
+        const newProdName = nameValue || deptId;
+        if (newProdName) {
+          const newProd: DepartmentData = {
+            id: `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: newProdName,
+            type: 'product',
+            parentId: 'tmc',
+            monthly: initialMonths.map(m => ({
+              month: m,
+              actual: 0,
+              plan: 0,
+              lastYear: 0,
+              profitActual: 0,
+              profitPlan: 0,
+              profitLastYear: 0
+            }))
+          };
+          dataByYear[year].push(newProd);
+          dept = newProd;
+          console.log(`Created new product from sync: ${newProdName}`);
+        }
+      }
+
       if (dept) {
         const mIdx = getMonthIndex(monthName);
         if (mIdx !== -1) {
-          if (type === 'revenue') {
+          updatedDeptIdsByYear[year].add(dept.id);
+          if (type === 'revenue' || type === 'product') {
             dept.monthly[mIdx] = { 
               ...dept.monthly[mIdx],
               month: initialMonths[mIdx], 
@@ -373,7 +422,7 @@ export const dataService = {
             dept.monthly[mIdx] = { 
               ...dept.monthly[mIdx],
               month: initialMonths[mIdx], 
-              profitActual: profitActualIdx !== -1 ? profitActual : actual, // Fallback to actual if specific profit columns not found
+              profitActual: profitActualIdx !== -1 ? profitActual : actual,
               profitPlan: profitPlanIdx !== -1 ? profitPlan : plan,
               profitLastYear: profitLastYearIdx !== -1 ? profitLastYear : lastYear
             };
@@ -390,16 +439,18 @@ export const dataService = {
 
     return {
       years: Array.from(yearsSet).sort((a, b) => b - a),
-      dataByYear
+      dataByYear,
+      updatedDeptIdsByYear
     };
   },
 
-  syncWithGoogleSheet: async (type?: 'revenue' | 'profit') => {
+  syncWithGoogleSheet: async (type?: 'revenue' | 'profit' | 'product') => {
     const config = dataService.getGoogleSheetConfig();
     if (!config) return null;
 
     const syncRevenue = !type || type === 'revenue';
     const syncProfit = !type || type === 'profit';
+    const syncProduct = !type || type === 'product';
 
     try {
       let allYears = new Set<number>(dataService.getYears());
@@ -408,30 +459,10 @@ export const dataService = {
         const { years, dataByYear } = await dataService.fetchFromGoogleSheet(config.sheetId, 'revenue');
         years.forEach(y => allYears.add(y));
         
-        Object.entries(dataByYear).forEach(([year, data]) => {
+        Object.entries(dataByYear).forEach(([yearStr, data]) => {
+          const year = parseInt(yearStr);
           const storageKey = `${STORAGE_PREFIX}${year}`;
-          const existing = localStorage.getItem(storageKey);
-          if (existing) {
-            const existingData: DepartmentData[] = JSON.parse(existing);
-            const merged = existingData.map(ed => {
-              const newData = data.find(nd => nd.id === ed.id);
-              if (newData) {
-                return {
-                  ...ed,
-                  monthly: ed.monthly.map((m, i) => ({
-                    ...m,
-                    actual: newData.monthly[i].actual,
-                    plan: newData.monthly[i].plan,
-                    lastYear: newData.monthly[i].lastYear
-                  }))
-                };
-              }
-              return ed;
-            });
-            localStorage.setItem(storageKey, JSON.stringify(dataService.recalculateTotals(merged)));
-          } else {
-            localStorage.setItem(storageKey, JSON.stringify(data));
-          }
+          localStorage.setItem(storageKey, JSON.stringify(data));
         });
         config.lastSync = new Date().toISOString();
       }
@@ -440,32 +471,24 @@ export const dataService = {
         const { years, dataByYear } = await dataService.fetchFromGoogleSheet(config.profitSheetId, 'profit');
         years.forEach(y => allYears.add(y));
 
-        Object.entries(dataByYear).forEach(([year, data]) => {
+        Object.entries(dataByYear).forEach(([yearStr, data]) => {
+          const year = parseInt(yearStr);
           const storageKey = `${STORAGE_PREFIX}${year}`;
-          const existing = localStorage.getItem(storageKey);
-          if (existing) {
-            const existingData: DepartmentData[] = JSON.parse(existing);
-            const merged = existingData.map(ed => {
-              const newData = data.find(nd => nd.id === ed.id);
-              if (newData) {
-                return {
-                  ...ed,
-                  monthly: ed.monthly.map((m, i) => ({
-                    ...m,
-                    profitActual: newData.monthly[i].profitActual,
-                    profitPlan: newData.monthly[i].profitPlan,
-                    profitLastYear: newData.monthly[i].profitLastYear
-                  }))
-                };
-              }
-              return ed;
-            });
-            localStorage.setItem(storageKey, JSON.stringify(dataService.recalculateTotals(merged)));
-          } else {
-            localStorage.setItem(storageKey, JSON.stringify(data));
-          }
+          localStorage.setItem(storageKey, JSON.stringify(data));
         });
         config.lastProfitSync = new Date().toISOString();
+      }
+
+      if (syncProduct && config.productSheetId) {
+        const { years, dataByYear } = await dataService.fetchFromGoogleSheet(config.productSheetId, 'product');
+        years.forEach(y => allYears.add(y));
+
+        Object.entries(dataByYear).forEach(([yearStr, data]) => {
+          const year = parseInt(yearStr);
+          const storageKey = `${STORAGE_PREFIX}${year}`;
+          localStorage.setItem(storageKey, JSON.stringify(data));
+        });
+        config.lastProductSync = new Date().toISOString();
       }
 
       const yearsArray = Array.from(allYears).sort((a, b) => b - a);
@@ -505,7 +528,7 @@ export const dataService = {
         let profitActual = 0, profitPlan = 0, profitLastYear = 0;
 
         if (parentId === 'all') {
-          // Revenue: Only from Bans
+          // Revenue: Sum ONLY from Bans (as per user request: "Doanh thu công ty bằng tổng các ban trực thuộc, không cộng trung tâm")
           const bans = children.filter((d: any) => d.type === 'ban');
           actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
           plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
@@ -518,11 +541,13 @@ export const dataService = {
           profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
         } else {
           // Standard aggregation (e.g. Phongs to Centers)
-          // For Centers, we ONLY aggregate Revenue (actual, plan, lastYear)
-          // We DO NOT aggregate Profit because Profit is entered at the Center level
-          actual = children.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
-          plan = children.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
-          lastYear = children.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
+          // As per user request: "doanh thu TMC bằng tổng các Phòng thuộc TMC cộng lại"
+          // We ignore products here as they are handled independently in the Product tab
+          const phongs = children.filter((c: any) => c.type === 'phong');
+
+          actual = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+          plan = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+          lastYear = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
           
           // Keep existing profit data if it's a center
           if (parent.type === 'center') {

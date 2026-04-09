@@ -31,7 +31,7 @@ export default function App() {
   }>({ field: 'perfVsPlan', direction: 'desc' });
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
-  const [dashboardTab, setDashboardTab] = useState<'revenue' | 'profit'>('revenue');
+  const [dashboardTab, setDashboardTab] = useState<'revenue' | 'profit' | 'product'>('revenue');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
@@ -149,7 +149,7 @@ export default function App() {
         indent: 1,
         phongs: dashboardTab === 'revenue' 
           ? cumulativeOverview
-              .filter(p => p.parentId === c.id)
+              .filter(p => p.parentId === c.id && p.type === 'phong')
               .map(p => ({ ...p, indent: 2 }))
               .sort(sortFn)
           : []
@@ -162,6 +162,37 @@ export default function App() {
         if (indexB !== -1) return 1;
         return sortFn(a, b);
       });
+
+    const products = dashboardTab === 'product'
+      ? cumulativeOverview
+          .filter(d => d.type === 'product' && d.parentId === 'tmc')
+          .map(p => ({ ...p, indent: 1 }))
+          .sort(sortFn)
+      : [];
+
+    const tmcCenter = cumulativeOverview.find(d => d.id === 'tmc');
+    const tmcTotal = tmcCenter ? {
+      ...tmcCenter,
+      name: 'TỔNG DOANH THU TMC',
+      type: 'company',
+      // If we are in product tab, ensure the total matches the sum of products shown
+      monthActual: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.monthActual, 0) : tmcCenter.monthActual,
+      monthPlan: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.monthPlan, 0) : tmcCenter.monthPlan,
+      monthLastYear: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.monthLastYear, 0) : tmcCenter.monthLastYear,
+      actual: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.actual, 0) : tmcCenter.actual,
+      plan: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.plan, 0) : tmcCenter.plan,
+      lastYear: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.lastYear, 0) : tmcCenter.lastYear,
+      annualPlan: dashboardTab === 'product' ? products.reduce((sum, p) => sum + p.annualPlan, 0) : tmcCenter.annualPlan,
+    } : null;
+
+    if (tmcTotal && dashboardTab === 'product') {
+      const tt = tmcTotal as any;
+      tt.monthPerfVsPlan = calculatePerformance(tt.monthActual, tt.monthPlan);
+      tt.monthPerfVsLastYear = calculatePerformance(tt.monthActual, tt.monthLastYear);
+      tt.perfVsPlan = calculatePerformance(tt.actual, tt.plan);
+      tt.perfVsLastYear = calculatePerformance(tt.actual, tt.lastYear);
+      tt.annualCompletion = calculatePerformance(tt.actual, tt.annualPlan);
+    }
 
     // Calculate total for centers section
     const centersTotal = {
@@ -188,10 +219,12 @@ export default function App() {
     return {
       company,
       centersTotal: ct,
+      tmcTotal,
       bansSection: [company, ...bans],
-      centersSection: [ct, ...centers]
+      centersSection: [ct, ...centers],
+      productsSection: tmcTotal ? [tmcTotal, ...products] : products
     };
-  }, [cumulativeOverview, sortConfig]);
+  }, [cumulativeOverview, sortConfig, dashboardTab]);
 
   // Expand top-level departments by default
   useEffect(() => {
@@ -429,7 +462,11 @@ export default function App() {
   };
 
   const handleSyncGSheet = async () => {
-    const sheetId = dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId;
+    const sheetId = dashboardTab === 'revenue' 
+      ? gsheetConfig?.sheetId 
+      : dashboardTab === 'profit' 
+        ? gsheetConfig?.profitSheetId 
+        : gsheetConfig?.productSheetId;
     if (!sheetId) return;
     
     setIsSyncing(true);
@@ -441,11 +478,11 @@ export default function App() {
       const data = dataService.getData(selectedYear);
       setAllDepts(data);
       setGsheetConfig(dataService.getGoogleSheetConfig());
+      const tabName = dashboardTab === 'revenue' ? 'Doanh thu' : dashboardTab === 'profit' ? 'Lợi nhuận' : 'Sản phẩm';
       setSyncStatus({ 
         type: 'success', 
-        message: `Đồng bộ dữ liệu ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'} thành công!` 
+        message: `Đồng bộ dữ liệu ${tabName} thành công!` 
       });
-      // Clear success message after 3 seconds
       setTimeout(() => setSyncStatus(null), 3000);
     } catch (error: any) {
       setSyncStatus({ 
@@ -458,7 +495,7 @@ export default function App() {
   };
 
   const downloadGSheetTemplate = () => {
-    const headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear'];
+    const headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear', 'Name'];
     const data: any[] = [];
     
     const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -474,7 +511,24 @@ export default function App() {
             'Month': m,
             'Actual': 0,
             'Plan': 0,
-            'LastYear': 0
+            'LastYear': 0,
+            'Name': dept.name
+          });
+        });
+      });
+    } else if (dashboardTab === 'product') {
+      // For product, include only products
+      const productDepts = allDepts.filter(d => d.type === 'product');
+      productDepts.forEach(dept => {
+        monthsShort.forEach(m => {
+          data.push({
+            'Year': selectedYear,
+            'DeptID': dept.id,
+            'Month': m,
+            'Actual': 0,
+            'Plan': 0,
+            'LastYear': 0,
+            'Name': dept.name
           });
         });
       });
@@ -489,7 +543,8 @@ export default function App() {
               'Month': m,
               'Actual': 0,
               'Plan': 0,
-              'LastYear': 0
+              'LastYear': 0,
+              'Name': dept.name
             });
           });
         }
@@ -499,7 +554,7 @@ export default function App() {
     const ws = XLSX.utils.json_to_sheet(data, { header: headers });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Template");
-    XLSX.writeFile(wb, `Google_Sheet_Template_${dashboardTab === 'revenue' ? 'DoanhThu' : 'LoiNhuan'}_${selectedYear}.xlsx`);
+    XLSX.writeFile(wb, `Google_Sheet_Template_${dashboardTab === 'revenue' ? 'DoanhThu' : dashboardTab === 'profit' ? 'LoiNhuan' : 'SanPham'}_${selectedYear}.xlsx`);
   };
 
   if (allDepts.length === 0) return null;
@@ -646,14 +701,14 @@ export default function App() {
               onClick={() => setIsGSheetModalOpen(true)}
               className={cn(
                 "p-2 border rounded-lg transition-all shadow-sm flex items-center gap-1.5",
-                (dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId)
+                (dashboardTab === 'revenue' ? gsheetConfig?.sheetId : dashboardTab === 'profit' ? gsheetConfig?.profitSheetId : gsheetConfig?.productSheetId)
                   ? "bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100" 
                   : "bg-white border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-400"
               )}
-              title={`Kết nối Google Sheets (${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'})`}
+              title={`Kết nối Google Sheets (${dashboardTab === 'revenue' ? 'Doanh thu' : dashboardTab === 'profit' ? 'Lợi nhuận' : 'Sản phẩm'})`}
             >
               <Cloud size={18} />
-              {(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId) && <span className="text-[10px] font-bold">Linked</span>}
+              {(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : dashboardTab === 'profit' ? gsheetConfig?.profitSheetId : gsheetConfig?.productSheetId) && <span className="text-[10px] font-bold">Linked</span>}
             </button>
 
             <button 
@@ -691,6 +746,17 @@ export default function App() {
             )}
           >
             Lợi nhuận
+          </button>
+          <button
+            onClick={() => setDashboardTab('product')}
+            className={cn(
+              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+              dashboardTab === 'product' 
+                ? "bg-white text-zinc-900 shadow-sm" 
+                : "text-zinc-500 hover:text-zinc-700"
+            )}
+          >
+            Sản phẩm TMC
           </button>
         </div>
 
@@ -820,13 +886,13 @@ export default function App() {
                         <col className="w-[7%]" />
                       </colgroup>
                       <thead>
-                        <tr className="bg-zinc-200 text-[11px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
+                        <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
                           <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
                           <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
                           <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
                           <th colSpan={2} className="px-1 py-2 text-center bg-zinc-200">Năm</th>
                         </tr>
-                        <tr className="bg-zinc-100 text-[10px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
+                        <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
                           <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>
                           <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>
                           <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
@@ -860,27 +926,27 @@ export default function App() {
                                 />
                               </button>
                               <div className="w-1 h-1 rounded-full bg-zinc-900" />
-                              <span className="text-[11px] text-zinc-900 font-bold truncate">{sortedOverview.company.name}</span>
+                              <span className="text-[13px] text-zinc-900 font-bold truncate">{sortedOverview.company.name}</span>
                             </div>
                           </td>
                           {/* Tháng hiện tại */}
-                          <td className="px-1 py-1.5 text-[11px] font-bold text-right">{formatNumber(sortedOverview.company.monthActual)}</td>
-                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthPlan)}</td>
+                          <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.company.monthActual)}</td>
+                          <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthPlan)}</td>
                           <td className="px-1 py-1.5">
                             <div className="flex items-center gap-1">
                               <MiniProgress percentage={sortedOverview.company.monthPerfVsPlan} />
-                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                 getPerformanceTextColor(sortedOverview.company.monthPerfVsPlan)
                               )}>
                                 {formatPercent(sortedOverview.company.monthPerfVsPlan)}
                               </span>
                             </div>
                           </td>
-                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthLastYear)}</td>
+                          <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthLastYear)}</td>
                           <td className="px-1 py-1.5 border-r border-zinc-50/50">
                             <div className="flex items-center gap-1">
                               <MiniProgress percentage={sortedOverview.company.monthPerfVsLastYear} />
-                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                 getPerformanceTextColor(sortedOverview.company.monthPerfVsLastYear)
                               )}>
                                 {formatPercent(sortedOverview.company.monthPerfVsLastYear)}
@@ -888,23 +954,23 @@ export default function App() {
                             </div>
                           </td>
                           {/* Lũy kế */}
-                          <td className="px-1 py-1.5 text-[11px] font-bold text-right">{formatNumber(sortedOverview.company.actual)}</td>
-                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.plan)}</td>
+                          <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.company.actual)}</td>
+                          <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.plan)}</td>
                           <td className="px-1 py-1.5">
                             <div className="flex items-center gap-1">
                               <MiniProgress percentage={sortedOverview.company.perfVsPlan} />
-                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                 getPerformanceTextColor(sortedOverview.company.perfVsPlan)
                               )}>
                                 {formatPercent(sortedOverview.company.perfVsPlan)}
                               </span>
                             </div>
                           </td>
-                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.lastYear)}</td>
+                          <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.lastYear)}</td>
                           <td className="px-1 py-1.5 border-r border-zinc-50/50">
                             <div className="flex items-center gap-1">
                               <MiniProgress percentage={sortedOverview.company.perfVsLastYear} />
-                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                 getPerformanceTextColor(sortedOverview.company.perfVsLastYear)
                               )}>
                                 {formatPercent(sortedOverview.company.perfVsLastYear)}
@@ -912,11 +978,11 @@ export default function App() {
                             </div>
                           </td>
                           {/* Năm */}
-                          <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.annualPlan)}</td>
+                          <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.annualPlan)}</td>
                           <td className="px-1 py-1.5">
                             <div className="flex items-center gap-1">
                               <MiniProgress percentage={sortedOverview.company.annualCompletion} />
-                              <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                 getPerformanceTextColor(sortedOverview.company.annualCompletion)
                               )}>
                                 {formatPercent(sortedOverview.company.annualCompletion)}
@@ -941,27 +1007,27 @@ export default function App() {
                               <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
                                 <div className="flex items-center gap-2 pl-6">
                                   <div className="w-1 h-1 rounded-full bg-amber-500" />
-                                  <span className="text-[11px] text-zinc-900 font-normal truncate">{dept.name}</span>
+                                  <span className="text-[12px] text-zinc-900 font-normal truncate">{dept.name}</span>
                                 </div>
                               </td>
                               {/* Tháng hiện tại */}
-                              <td className="px-1 py-1.5 text-[11px] font-normal text-right">{formatNumber(dept.monthActual)}</td>
-                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthPlan)}</td>
+                              <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(dept.monthActual)}</td>
+                              <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthPlan)}</td>
                               <td className="px-1 py-1.5">
                                 <div className="flex items-center gap-1">
                                   <MiniProgress percentage={dept.monthPerfVsPlan} />
-                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                     getPerformanceTextColor(dept.monthPerfVsPlan)
                                   )}>
                                     {formatPercent(dept.monthPerfVsPlan)}
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthLastYear)}</td>
+                              <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthLastYear)}</td>
                               <td className="px-1 py-1.5 border-r border-zinc-50/50">
                                 <div className="flex items-center gap-1">
                                   <MiniProgress percentage={dept.monthPerfVsLastYear} />
-                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                     getPerformanceTextColor(dept.monthPerfVsLastYear)
                                   )}>
                                     {formatPercent(dept.monthPerfVsLastYear)}
@@ -969,23 +1035,23 @@ export default function App() {
                                 </div>
                               </td>
                               {/* Lũy kế */}
-                              <td className="px-1 py-1.5 text-[11px] font-normal text-right">{formatNumber(dept.actual)}</td>
-                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.plan)}</td>
+                              <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(dept.actual)}</td>
+                              <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.plan)}</td>
                               <td className="px-1 py-1.5">
                                 <div className="flex items-center gap-1">
                                   <MiniProgress percentage={dept.perfVsPlan} />
-                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                     getPerformanceTextColor(dept.perfVsPlan)
                                   )}>
                                     {formatPercent(dept.perfVsPlan)}
                                   </span>
                                 </div>
                               </td>
-                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.lastYear)}</td>
+                              <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.lastYear)}</td>
                               <td className="px-1 py-1.5 border-r border-zinc-50/50">
                                 <div className="flex items-center gap-1">
                                   <MiniProgress percentage={dept.perfVsLastYear} />
-                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                     getPerformanceTextColor(dept.perfVsLastYear)
                                   )}>
                                     {formatPercent(dept.perfVsLastYear)}
@@ -993,11 +1059,11 @@ export default function App() {
                                 </div>
                               </td>
                               {/* Năm */}
-                              <td className="px-1 py-1.5 text-[11px] text-zinc-500 text-right font-normal">{formatNumber(dept.annualPlan)}</td>
+                              <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.annualPlan)}</td>
                               <td className="px-1 py-1.5">
                                 <div className="flex items-center gap-1">
                                   <MiniProgress percentage={dept.annualCompletion} />
-                                  <span className={cn("text-[10px] font-bold min-w-[28px] text-right", 
+                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
                                     getPerformanceTextColor(dept.annualCompletion)
                                   )}>
                                     {formatPercent(dept.annualCompletion)}
@@ -1012,10 +1078,10 @@ export default function App() {
                   </div>
                 </div>
             )}
-            </div>
 
             {/* Section 2: Company & Centers */}
-            <div id="section-centers" className="space-y-6">
+            {dashboardTab !== 'product' && (
+              <div id="section-centers" className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
@@ -1375,11 +1441,147 @@ export default function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Section 3: TMC Products */}
+            {dashboardTab === 'product' && (
+              <div id="section-products" className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
+                    <h2 className="text-xl font-bold text-zinc-800">
+                      Doanh thu TMC theo sản phẩm
+                    </h2>
+                  </div>
+                </div>
+                <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden">
+                  <table className="w-full text-left border-separate border-spacing-0 table-fixed">
+                    <colgroup>
+                      <col className="w-[23%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[6%]" />
+                      <col className="w-[7%]" />
+                      <col className="w-[7%]" />
+                    </colgroup>
+                    <thead>
+                      <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
+                        <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Sản phẩm</th>
+                        <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                        <th colSpan={5} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
+                        <th colSpan={2} className="px-1 py-2 text-center bg-zinc-200">Năm</th>
+                      </tr>
+                      <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>
+                        <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>
+                        <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>
+                        <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>
+                        <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>
+                        <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH Năm</th>
+                        <th className="px-1 py-2 text-center">% HT</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-50">
+                      {sortedOverview.productsSection.map((item: any) => (
+                        <tr 
+                          key={item.id} 
+                          className={cn(
+                            "group hover:bg-zinc-50/50 transition-colors cursor-pointer",
+                            item.type === 'company' && "bg-zinc-50/30 font-bold"
+                          )}
+                          onClick={() => setSelectedDeptId(item.id)}
+                        >
+                          <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
+                            <div className={cn("flex items-center gap-2", item.indent === 1 ? "pl-4" : "pl-8")}>
+                              <div className={cn("w-1 h-1 rounded-full", item.type === 'company' ? "bg-zinc-900" : "bg-blue-500")} />
+                              <span className={cn("text-[13px] truncate", item.type === 'company' ? "text-zinc-900 font-bold" : "text-zinc-600 font-normal")}>
+                                {item.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={cn("px-1 py-1.5 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.monthActual)}</td>
+                          <td className={cn("px-1 py-1.5 text-zinc-500 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.monthPlan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={item.monthPerfVsPlan} />
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(item.monthPerfVsPlan)
+                              )}>
+                                {formatPercent(item.monthPerfVsPlan)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={cn("px-1 py-1.5 text-zinc-500 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.monthLastYear)}</td>
+                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={item.monthPerfVsLastYear} />
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(item.monthPerfVsLastYear)
+                              )}>
+                                {formatPercent(item.monthPerfVsLastYear)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={cn("px-1 py-1.5 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.actual)}</td>
+                          <td className={cn("px-1 py-1.5 text-zinc-500 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.plan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={item.perfVsPlan} />
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(item.perfVsPlan)
+                              )}>
+                                {formatPercent(item.perfVsPlan)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={cn("px-1 py-1.5 text-zinc-500 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.lastYear)}</td>
+                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={item.perfVsLastYear} />
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(item.perfVsLastYear)
+                              )}>
+                                {formatPercent(item.perfVsLastYear)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className={cn("px-1 py-1.5 text-zinc-500 text-right", item.type === 'company' ? "text-[13px]" : "text-[12px]")}>{formatNumber(item.annualPlan)}</td>
+                          <td className="px-1 py-1.5">
+                            <div className="flex items-center gap-1">
+                              <MiniProgress percentage={item.annualCompletion} />
+                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                                getPerformanceTextColor(item.annualCompletion)
+                              )}>
+                                {formatPercent(item.annualCompletion)}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
-    </motion.div>
-  </main>
+        </motion.div>
+      </main>
 
       {/* Google Sheets Integration Modal */}
       <AnimatePresence>
@@ -1389,27 +1591,27 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden border border-white/20"
+              className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden border border-white/20 flex flex-col max-h-[90vh]"
             >
-              <div className="p-8 space-y-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl">
-                      <Cloud size={24} />
-                    </div>
-                    <div>
-                      <h2 className="text-2xl font-bold text-zinc-900">Google Sheets</h2>
-                      <p className="text-sm text-zinc-500 font-medium">Kết nối và đồng bộ dữ liệu trực tuyến</p>
-                    </div>
+              <div className="p-8 pb-4 flex items-center justify-between shrink-0 border-b border-zinc-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 bg-emerald-600 rounded-2xl flex items-center justify-center text-white shadow-xl">
+                    <Cloud size={24} />
                   </div>
-                  <button 
-                    onClick={() => setIsGSheetModalOpen(false)}
-                    className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-400"
-                  >
-                    <X size={24} />
-                  </button>
+                  <div>
+                    <h2 className="text-2xl font-bold text-zinc-900">Google Sheets</h2>
+                    <p className="text-sm text-zinc-500 font-medium">Kết nối và đồng bộ dữ liệu trực tuyến</p>
+                  </div>
                 </div>
+                <button 
+                  onClick={() => setIsGSheetModalOpen(false)}
+                  className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-400"
+                >
+                  <X size={24} />
+                </button>
+              </div>
 
+              <div className="p-8 pt-6 overflow-y-auto space-y-6">
                 <div className="space-y-6">
                   <div className="space-y-4 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                     <div className="flex items-center gap-2 mb-2">
@@ -1459,6 +1661,30 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="space-y-4 p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-1 h-4 bg-blue-500 rounded-full" />
+                      <h4 className="text-sm font-bold text-zinc-700">Cấu hình Sản phẩm TMC</h4>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Google Sheet ID (Sản phẩm)</label>
+                      <input 
+                        type="text" 
+                        placeholder="Nhập ID Sheet Sản phẩm..."
+                        value={gsheetConfig?.productSheetId || ''}
+                        onChange={(e) => {
+                          const newConfig = { ...(gsheetConfig || { autoSync: false, sheetId: '' }), productSheetId: e.target.value };
+                          setGsheetConfig(newConfig);
+                          dataService.saveGoogleSheetConfig(newConfig);
+                        }}
+                        className="w-full px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                      />
+                      {gsheetConfig?.lastProductSync && (
+                        <p className="text-[10px] text-zinc-400">Đồng bộ cuối: {new Date(gsheetConfig.lastProductSync).toLocaleString()}</p>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
                     <div className="space-y-1">
                       <h4 className="text-sm font-bold text-zinc-700">Tự động đồng bộ</h4>
@@ -1466,7 +1692,7 @@ export default function App() {
                     </div>
                     <button 
                       onClick={() => {
-                        const newConfig = { ...(gsheetConfig || { sheetId: '', profitSheetId: '', autoSync: false }), autoSync: !gsheetConfig?.autoSync };
+                        const newConfig = { ...(gsheetConfig || { sheetId: '', profitSheetId: '', productSheetId: '', autoSync: false }), autoSync: !gsheetConfig?.autoSync };
                         setGsheetConfig(newConfig);
                         dataService.saveGoogleSheetConfig(newConfig);
                       }}
@@ -1481,7 +1707,6 @@ export default function App() {
                       )} />
                     </button>
                   </div>
-                </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <button 
@@ -1489,18 +1714,18 @@ export default function App() {
                       className="flex items-center justify-center gap-2 py-3 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
                     >
                       <Download size={18} />
-                      Tải mẫu Excel
+                      <span>Tải template</span>
                     </button>
                     <button 
                       onClick={handleSyncGSheet}
-                      disabled={!(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId) || isSyncing}
+                      disabled={!(dashboardTab === 'revenue' ? gsheetConfig?.sheetId : dashboardTab === 'profit' ? gsheetConfig?.profitSheetId : gsheetConfig?.productSheetId) || isSyncing}
                       className={cn(
                         "flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-bold transition-all shadow-lg",
                         isSyncing ? "bg-zinc-100 text-zinc-400" : "bg-zinc-900 text-white hover:bg-zinc-800 shadow-zinc-100"
                       )}
                     >
                       <RefreshCw size={18} className={cn(isSyncing && "animate-spin")} />
-                      {isSyncing ? 'Đang đồng bộ...' : `Đồng bộ ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}`}
+                      {isSyncing ? 'Đang đồng bộ...' : `Đồng bộ ${dashboardTab === 'revenue' ? 'Doanh thu' : dashboardTab === 'profit' ? 'Lợi nhuận' : 'Sản phẩm'}`}
                     </button>
                   </div>
 
@@ -1536,7 +1761,7 @@ export default function App() {
                       <li>Đảm bảo quyền là <strong>Người xem (Viewer)</strong>.</li>
                       <li>Copy toàn bộ URL trình duyệt và dán vào ô cấu hình tương ứng.</li>
                     </ol>
-                    <div className="pt-2 flex gap-2">
+                    <div className="pt-2 flex flex-wrap gap-2">
                       <button 
                         onClick={() => {
                           const id = gsheetConfig?.sheetId;
@@ -1547,9 +1772,9 @@ export default function App() {
                             alert('Vui lòng nhập ID Sheet Doanh thu trước.');
                           }
                         }}
-                        className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-all"
+                        className="px-3 py-2 bg-white border border-emerald-200 rounded-lg text-[10px] font-bold text-emerald-600 hover:bg-emerald-100 transition-all"
                       >
-                        Kiểm tra link Doanh thu
+                        Link Doanh thu
                       </button>
                       <button 
                         onClick={() => {
@@ -1561,12 +1786,27 @@ export default function App() {
                             alert('Vui lòng nhập ID Sheet Lợi nhuận trước.');
                           }
                         }}
-                        className="flex-1 px-3 py-2 bg-white border border-blue-200 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-all"
+                        className="px-3 py-2 bg-white border border-amber-200 rounded-lg text-[10px] font-bold text-amber-600 hover:bg-amber-100 transition-all"
                       >
-                        Kiểm tra link Lợi nhuận
+                        Link Lợi nhuận
+                      </button>
+                      <button 
+                        onClick={() => {
+                          const id = gsheetConfig?.productSheetId;
+                          if (id) {
+                            const cleanId = id.includes('/d/') ? id.split('/d/')[1].split('/')[0] : id;
+                            window.open(`https://docs.google.com/spreadsheets/d/${cleanId}/export?format=csv`, '_blank');
+                          } else {
+                            alert('Vui lòng nhập ID Sheet Sản phẩm trước.');
+                          }
+                        }}
+                        className="px-3 py-2 bg-white border border-blue-200 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-100 transition-all"
+                      >
+                        Link Sản phẩm
                       </button>
                     </div>
                   </div>
+                </div>
               </div>
               
               <div className="px-8 py-6 bg-zinc-50 flex justify-end">
@@ -1954,6 +2194,7 @@ export default function App() {
             data={allDepts} 
             year={selectedYear}
             initialTab={dashboardTab}
+            gsheetConfig={gsheetConfig}
             onSave={handleSaveData} 
             onClose={() => setIsDataEntryOpen(false)} 
           />

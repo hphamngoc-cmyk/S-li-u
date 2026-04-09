@@ -1,23 +1,28 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { X, Plus, Trash2, Save, AlertCircle, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { X, Plus, Trash2, Save, AlertCircle, Download, Upload, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DepartmentData, MonthlyData } from '../types';
 import { cn, formatNumber } from '../utils';
 
+import { dataService, GoogleSheetConfig } from '../services/dataService';
+
 interface DataEntryProps {
   data: DepartmentData[];
   year: number;
-  initialTab?: 'revenue' | 'profit';
+  initialTab?: 'revenue' | 'profit' | 'product';
+  gsheetConfig?: GoogleSheetConfig | null;
   onSave: (newData: DepartmentData[]) => void;
   onClose: () => void;
 }
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = 'revenue', onSave, onClose }) => {
+export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = 'revenue', gsheetConfig, onSave, onClose }) => {
   const [localData, setLocalData] = useState<DepartmentData[]>(JSON.parse(JSON.stringify(data)));
   const [activeDeptId, setActiveDeptId] = useState(data[0]?.id || 'all');
-  const [entryTab, setEntryTab] = useState<'revenue' | 'profit'>(initialTab);
+  const [entryTab, setEntryTab] = useState<'revenue' | 'profit' | 'product'>(initialTab);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   // Sync with external data changes (e.g. from Google Sheets sync)
   useEffect(() => {
@@ -31,7 +36,9 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
 
   const isParent = entryTab === 'revenue' 
     ? (activeDept.type === 'company' || activeDept.type === 'center')
-    : false; // In profit tab, we allow editing centers directly as they are the leaf nodes for profit
+    : entryTab === 'profit'
+      ? false
+      : false; // In product tab, we edit products directly
 
   const recalculateTotals = (data: DepartmentData[]) => {
     const newData = JSON.parse(JSON.stringify(data));
@@ -39,8 +46,12 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
     // 1. Aggregate Revenue (Actual/Plan/LastYear) from Phongs to Centers
     const centers = newData.filter((d: any) => d.type === 'center');
     centers.forEach((center: any) => {
-      const phongs = newData.filter((d: any) => d.parentId === center.id);
+      const children = newData.filter((d: any) => d.parentId === center.id);
       center.monthly = months.map((month: string, index: number) => {
+        // As per user request: "doanh thu TMC bằng tổng các Phòng thuộc TMC cộng lại"
+        // We ignore products here as they are handled independently in the Product tab
+        const phongs = children.filter((c: any) => c.type === 'phong');
+
         const actual = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
         const plan = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
         const lastYear = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
@@ -60,7 +71,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
     if (company) {
       const children = newData.filter((d: any) => d.parentId === 'all');
       company.monthly = months.map((month: string, index: number) => {
-        // Revenue: Only from Bans
+        // Revenue: Sum ONLY from Bans (as per user request: "Doanh thu công ty bằng tổng các ban trực thuộc, không cộng trung tâm")
         const bans = children.filter((d: any) => d.type === 'ban');
         const actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
         const plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
@@ -88,6 +99,15 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
       if (company) result.push(company);
       const centers = localData.filter(d => d.type === 'center');
       result.push(...centers);
+      return result;
+    }
+
+    if (entryTab === 'product') {
+      // For product tab, show TMC and its products
+      const tmc = localData.find(d => d.id === 'tmc');
+      if (tmc) result.push(tmc);
+      const products = localData.filter(d => d.type === 'product' && d.parentId === 'tmc');
+      result.push(...products);
       return result;
     }
 
@@ -153,10 +173,10 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
 
   const addDepartment = () => {
     const newDept: DepartmentData = {
-      id: `dept_${Date.now()}`,
-      name: 'Bộ phận mới',
-      type: 'phong',
-      parentId: 'tmc', // Default to TMC center for new phongs
+      id: entryTab === 'product' ? `prod_${Date.now()}` : `dept_${Date.now()}`,
+      name: entryTab === 'product' ? 'Sản phẩm mới' : 'Bộ phận mới',
+      type: entryTab === 'product' ? 'product' : 'phong',
+      parentId: 'tmc', // Default to TMC center
       monthly: months.map(m => ({ 
         month: m, 
         actual: 0, 
@@ -247,6 +267,23 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
     reader.readAsBinaryString(file);
   };
 
+  const handleSyncGSheet = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      // Sync the specific tab
+      await dataService.syncWithGoogleSheet(entryTab);
+      // Reload data for the current year
+      const updatedData = dataService.getData(year);
+      setLocalData(updatedData);
+    } catch (err: any) {
+      setSyncError(err.message || 'Đồng bộ thất bại');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleResetLocalData = () => {
     if (confirm(`Bạn có chắc chắn muốn xóa tất cả số liệu đang nhập của năm ${year}?`)) {
       const resetData = localData.map(dept => ({
@@ -294,7 +331,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                   >
                     {dept.name}
                   </button>
-                  {dept.id !== 'all' && entryTab === 'revenue' && (
+                  {dept.id !== 'all' && (entryTab === 'revenue' || entryTab === 'product') && (
                     <button 
                       onClick={() => removeDepartment(dept.id)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-rose-500 opacity-0 group-hover:opacity-100 hover:bg-rose-50 rounded-lg transition-all"
@@ -304,13 +341,13 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                   )}
                 </div>
               ))}
-              {entryTab === 'revenue' && (
+              {(entryTab === 'revenue' || entryTab === 'product') && (
                 <button 
                   onClick={addDepartment}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed border-zinc-200 rounded-xl text-sm font-bold text-zinc-400 hover:border-zinc-400 hover:text-zinc-600 transition-all"
                 >
                   <Plus size={16} />
-                  Thêm bộ phận
+                  {entryTab === 'product' ? 'Thêm sản phẩm' : 'Thêm bộ phận'}
                 </button>
               )}
             </div>
@@ -338,8 +375,35 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                 >
                   Lợi nhuận
                 </button>
+                <button
+                  onClick={() => setEntryTab('product')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+                    entryTab === 'product' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+                  )}
+                >
+                  Sản phẩm TMC
+                </button>
               </div>
               <div className="flex gap-2">
+                {((entryTab === 'revenue' && gsheetConfig?.sheetId) || 
+                  (entryTab === 'profit' && gsheetConfig?.profitSheetId) || 
+                  (entryTab === 'product' && gsheetConfig?.productSheetId)) && (
+                  <button 
+                    onClick={handleSyncGSheet}
+                    disabled={isSyncing}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all",
+                      isSyncing 
+                        ? "bg-zinc-100 text-zinc-400 cursor-not-allowed" 
+                        : "bg-sky-50 border border-sky-100 text-sky-600 hover:bg-sky-100"
+                    )}
+                    title="Đồng bộ từ Google Sheet"
+                  >
+                    <RefreshCw size={18} className={cn(isSyncing && "animate-spin")} />
+                    {isSyncing ? 'Đang đồng bộ...' : 'Đồng bộ Sheet'}
+                  </button>
+                )}
                 <button 
                   onClick={downloadTemplate}
                   className="flex items-center gap-2 px-4 py-2.5 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-all"
@@ -369,16 +433,18 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
             <div className="space-y-6 mb-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-1">
-                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Tên bộ phận</label>
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
+                    {entryTab === 'product' ? 'Tên sản phẩm' : 'Tên bộ phận'}
+                  </label>
                   <input 
                     type="text" 
                     value={activeDept.name}
                     onChange={(e) => handleDeptNameChange(activeDept.id, e.target.value)}
-                    disabled={activeDept.id === 'all'}
+                    disabled={activeDept.id === 'all' || activeDept.id === 'tmc'}
                     className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
                   />
                 </div>
-                {activeDept.id !== 'all' && entryTab === 'revenue' && (
+                {activeDept.id !== 'all' && activeDept.id !== 'tmc' && entryTab === 'revenue' && (
                   <>
                     <div>
                       <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">Loại</label>
@@ -424,6 +490,13 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                   Dữ liệu của <strong>{activeDept.name}</strong> được tự động tính toán từ các bộ phận trực thuộc. 
                   Bạn không thể chỉnh sửa trực tiếp tại đây.
                 </p>
+              </div>
+            )}
+
+            {syncError && (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-100 rounded-xl flex items-center gap-3 text-rose-700">
+                <AlertCircle size={18} className="flex-shrink-0" />
+                <p className="text-xs font-medium">{syncError}</p>
               </div>
             )}
 
