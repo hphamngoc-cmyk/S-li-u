@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download } from 'lucide-react';
+import { toPng } from 'html-to-image';
+import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download, Image as ImageIcon, Check, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 import { dataService, GoogleSheetConfig } from './services/dataService';
@@ -31,6 +32,9 @@ export default function App() {
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [expandedDepts, setExpandedDepts] = useState<Set<string>>(new Set());
   const [dashboardTab, setDashboardTab] = useState<'revenue' | 'profit'>('revenue');
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
+  const [isExporting, setIsExporting] = useState(false);
 
   const months = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
   const currentYear = new Date().getFullYear();
@@ -137,6 +141,7 @@ export default function App() {
           .sort(sortFn)
       : [];
 
+    const centerOrder = ['tmc', 'nura_hn', 'nura_hcm'];
     const centers = cumulativeOverview
       .filter(d => d.type === 'center')
       .map(c => ({
@@ -149,7 +154,14 @@ export default function App() {
               .sort(sortFn)
           : []
       }))
-      .sort(sortFn);
+      .sort((a, b) => {
+        const indexA = centerOrder.indexOf(a.id);
+        const indexB = centerOrder.indexOf(b.id);
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return sortFn(a, b);
+      });
 
     // Calculate total for centers section
     const centersTotal = {
@@ -267,6 +279,155 @@ export default function App() {
     setIsDataEntryOpen(false);
   };
 
+  const handleExportImage = async () => {
+    if (selectedExportIds.length === 0) return;
+    
+    setIsExporting(true);
+    // Small delay to ensure UI is settled
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    try {
+      // Create a main canvas for the 16:9 output
+      const mainCanvas = document.createElement('canvas');
+      mainCanvas.width = 1920;
+      mainCanvas.height = 1080;
+      const ctx = mainCanvas.getContext('2d');
+      if (!ctx) throw new Error('Could not get canvas context');
+
+      // Fill background
+      ctx.fillStyle = '#f9fafb'; // zinc-50
+      ctx.fillRect(0, 0, 1920, 1080);
+
+      // Draw Header
+      ctx.fillStyle = '#18181b'; // zinc-900
+      ctx.font = 'bold 40px sans-serif';
+      ctx.fillText(`Báo cáo Hiệu suất ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}`, 60, 100);
+      
+      ctx.fillStyle = '#71717a'; // zinc-500
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`${months[selectedMonth]} - Năm ${selectedYear}`, 60, 140);
+
+      ctx.fillStyle = '#a1a1aa'; // zinc-400
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`Xuất ngày: ${new Date().toLocaleDateString('vi-VN')}`, 1860, 140);
+      ctx.textAlign = 'left';
+
+      // Draw separator line
+      ctx.strokeStyle = '#e4e4e7'; // zinc-200
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(60, 170);
+      ctx.lineTo(1860, 170);
+      ctx.stroke();
+
+      // Capture each element as an image
+      const images = [];
+      for (const id of selectedExportIds) {
+        const element = document.getElementById(id);
+        if (element) {
+          // Use toPng with some options for better reliability
+          const dataUrl = await toPng(element, {
+            backgroundColor: '#ffffff',
+            quality: 1,
+            pixelRatio: 2,
+            cacheBust: true,
+            style: {
+              borderRadius: '0' // Ensure clean edges for the capture
+            }
+          });
+          
+          // Load the image
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = dataUrl;
+          });
+          images.push(img);
+        }
+      }
+
+      if (images.length === 0) return;
+
+      // Layout logic
+      const padding = 60;
+      const startY = 220;
+      const availableWidth = 1920 - (padding * 2);
+      const availableHeight = 1080 - startY - padding;
+
+      if (images.length === 1) {
+        const img = images[0];
+        const ratio = img.width / img.height;
+        let drawWidth = availableWidth;
+        let drawHeight = drawWidth / ratio;
+
+        if (drawHeight > availableHeight) {
+          drawHeight = availableHeight;
+          drawWidth = drawHeight * ratio;
+        }
+
+        const x = padding + (availableWidth - drawWidth) / 2;
+        const y = startY + (availableHeight - drawHeight) / 2;
+        ctx.drawImage(img, x, y, drawWidth, drawHeight);
+      } else {
+        // Grid layout for multiple images
+        const cols = 2;
+        const rows = Math.ceil(images.length / cols);
+        const cellWidth = (availableWidth - 40) / cols;
+        const cellHeight = (availableHeight - (40 * (rows - 1))) / rows;
+
+        images.forEach((img, index) => {
+          const col = index % cols;
+          const row = Math.floor(index / cols);
+          
+          const ratio = img.width / img.height;
+          let drawWidth = cellWidth;
+          let drawHeight = drawWidth / ratio;
+
+          if (drawHeight > cellHeight) {
+            drawHeight = cellHeight;
+            drawWidth = drawHeight * ratio;
+          }
+
+          const x = padding + col * (cellWidth + 40) + (cellWidth - drawWidth) / 2;
+          const y = startY + row * (cellHeight + 40) + (cellHeight - drawHeight) / 2;
+          
+          // Add a small shadow/border for each table
+          ctx.shadowColor = 'rgba(0,0,0,0.1)';
+          ctx.shadowBlur = 10;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 4;
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(x, y, drawWidth, drawHeight);
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetY = 0;
+          
+          ctx.drawImage(img, x, y, drawWidth, drawHeight);
+          
+          // Border
+          ctx.strokeStyle = '#e4e4e7';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x, y, drawWidth, drawHeight);
+        });
+      }
+
+      // Export
+      const finalDataUrl = mainCanvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `Bao-cao-${dashboardTab}-${selectedYear}-${selectedMonth + 1}.png`;
+      link.href = finalDataUrl;
+      link.click();
+      
+      setIsExportModalOpen(false);
+    } catch (err) {
+      console.error('Export failed', err);
+      alert('Có lỗi xảy ra khi xuất ảnh. Vui lòng thử lại.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleSyncGSheet = async () => {
     const sheetId = dashboardTab === 'revenue' ? gsheetConfig?.sheetId : gsheetConfig?.profitSheetId;
     if (!sheetId) return;
@@ -359,6 +520,14 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button 
+              onClick={() => setIsExportModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 transition-all shadow-sm"
+            >
+              <ImageIcon size={16} className="text-zinc-400" />
+              <span className="hidden sm:inline">Xuất ảnh</span>
+            </button>
+
             {/* Year Selector */}
             <div className="relative">
               <button 
@@ -621,7 +790,7 @@ export default function App() {
           <div className="w-full space-y-10">
             {/* Section 1: Company & Bans */}
             {dashboardTab === 'revenue' && (
-              <div className="space-y-4">
+              <div id="section-bans" className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-1.5 h-6 bg-amber-500 rounded-full" />
@@ -846,7 +1015,7 @@ export default function App() {
             </div>
 
             {/* Section 2: Company & Centers */}
-            <div className="space-y-6">
+            <div id="section-centers" className="space-y-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-6 bg-blue-500 rounded-full" />
@@ -995,7 +1164,7 @@ export default function App() {
                         className="grid grid-cols-1 gap-4"
                       >
                         {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (
-                          <div key={center.id} className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                          <div id={`center-table-${center.id}`} key={center.id} className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
                         <table className="w-full text-left border-separate border-spacing-0 table-fixed">
                         <colgroup>
                           <col className="w-[23%]" />
@@ -1412,6 +1581,165 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Export Modal */}
+      <AnimatePresence>
+        {isExportModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
+                    <ImageIcon size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-zinc-900">Xuất ảnh báo cáo</h3>
+                    <p className="text-xs text-zinc-500 font-medium">Chọn các bảng dữ liệu để đưa vào ảnh (Size 16:9)</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsExportModalOpen(false)}
+                  className="p-2 hover:bg-zinc-200 rounded-full transition-colors"
+                >
+                  <X size={20} className="text-zinc-400" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {dashboardTab === 'revenue' && (
+                    <button 
+                      onClick={() => {
+                        setSelectedExportIds(prev => 
+                          prev.includes('section-bans') 
+                            ? prev.filter(id => id !== 'section-bans')
+                            : [...prev, 'section-bans']
+                        );
+                      }}
+                      className={cn(
+                        "p-4 rounded-2xl border-2 text-left transition-all group",
+                        selectedExportIds.includes('section-bans')
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <TableIcon size={20} className={selectedExportIds.includes('section-bans') ? "text-white/60" : "text-zinc-400"} />
+                        {selectedExportIds.includes('section-bans') && <Check size={16} />}
+                      </div>
+                      <span className="text-sm font-bold">Bảng Khối Ban</span>
+                    </button>
+                  )}
+                  
+                  <button 
+                    onClick={() => {
+                      setSelectedExportIds(prev => 
+                        prev.includes('section-centers') 
+                          ? prev.filter(id => id !== 'section-centers')
+                          : [...prev, 'section-centers']
+                      );
+                    }}
+                    className={cn(
+                      "p-4 rounded-2xl border-2 text-left transition-all group",
+                      selectedExportIds.includes('section-centers')
+                        ? "border-zinc-900 bg-zinc-900 text-white"
+                        : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                    )}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <TableIcon size={20} className={selectedExportIds.includes('section-centers') ? "text-white/60" : "text-zinc-400"} />
+                      {selectedExportIds.includes('section-centers') && <Check size={16} />}
+                    </div>
+                    <span className="text-sm font-bold">Bảng Tổng Trung tâm</span>
+                  </button>
+
+                  {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (
+                    <button 
+                      key={center.id}
+                      onClick={() => {
+                        const id = `center-table-${center.id}`;
+                        setSelectedExportIds(prev => 
+                          prev.includes(id) 
+                            ? prev.filter(i => i !== id)
+                            : [...prev, id]
+                        );
+                      }}
+                      className={cn(
+                        "p-4 rounded-2xl border-2 text-left transition-all group",
+                        selectedExportIds.includes(`center-table-${center.id}`)
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                      )}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <TableIcon size={20} className={selectedExportIds.includes(`center-table-${center.id}`) ? "text-white/60" : "text-zinc-400"} />
+                        {selectedExportIds.includes(`center-table-${center.id}`) && <Check size={16} />}
+                      </div>
+                      <span className="text-sm font-bold">Bảng {center.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="bg-zinc-50 rounded-2xl p-4 border border-zinc-100">
+                  <div className="flex items-start gap-3">
+                    <Info size={18} className="text-zinc-400 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-zinc-700">Lưu ý khi xuất ảnh:</p>
+                      <ul className="text-[11px] text-zinc-500 space-y-1 list-disc pl-4">
+                        <li>Ảnh sẽ được xuất với độ phân giải cao (1920x1080).</li>
+                        <li>Nếu chọn nhiều bảng, chúng sẽ được sắp xếp tự động để tối ưu không gian.</li>
+                        <li>Đảm bảo các bảng dữ liệu đang hiển thị đầy đủ trên màn hình trước khi xuất.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-100 flex items-center justify-between">
+                <div className="text-xs text-zinc-500 font-bold">
+                  Đã chọn: <span className="text-zinc-900">{selectedExportIds.length}</span> bảng
+                </div>
+                <div className="flex items-center gap-3">
+                  <button 
+                    onClick={() => setSelectedExportIds([])}
+                    className="px-4 py-2 text-sm font-bold text-zinc-500 hover:text-zinc-900 transition-colors"
+                  >
+                    Xóa chọn
+                  </button>
+                  <button 
+                    onClick={handleExportImage}
+                    disabled={selectedExportIds.length === 0 || isExporting}
+                    className={cn(
+                      "flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold text-white transition-all shadow-lg",
+                      selectedExportIds.length === 0 || isExporting
+                        ? "bg-zinc-300 shadow-none"
+                        : "bg-zinc-900 hover:bg-zinc-800 active:scale-95"
+                    )}
+                  >
+                    {isExporting ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" />
+                        <span>Đang xử lý...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download size={16} />
+                        <span>Tải ảnh PNG</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isYearManagementOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-md">
