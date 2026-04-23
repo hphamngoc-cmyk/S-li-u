@@ -483,13 +483,16 @@ export default function App() {
     const isProfitTab = dashboardTab === 'profit';
     const hasIndicators = isProfitTab && dept.profitIndicators && dept.profitIndicators.length > 0;
     
+    const isCenter = dept.type === 'center';
+    const isBoldRow = !!options.isHeaderTotal || isCenter;
+    
     // For non-profit or when indicators are not available, render a single row
     if (!hasIndicators) {
       return (
         <tr 
           key={dept.id}
           className={cn(
-            options.isHeaderTotal ? "bg-zinc-50/30 font-bold" : "bg-white",
+            isBoldRow ? "bg-zinc-100/30 font-bold" : "bg-white",
             options.isPhong ? "bg-zinc-50/10" : "",
             "group hover:bg-zinc-50/50 transition-colors cursor-pointer"
           )} 
@@ -512,15 +515,15 @@ export default function App() {
                   />
                 </button>
               )}
-              {!options.showExpand && <div className={cn("w-1 h-1 rounded-full", options.isHeaderTotal ? "bg-zinc-900" : "bg-zinc-300")} />}
+              {!options.showExpand && <div className={cn("w-1 h-1 rounded-full", isBoldRow ? "bg-zinc-900" : "bg-zinc-300")} />}
               <span className={cn("text-[13px] truncate", 
-                options.isHeaderTotal || (dept.type !== 'phong' && dept.type !== 'ban' && dept.type !== 'product') ? "font-bold text-zinc-900" : "text-zinc-600"
+                isBoldRow || (dept.type !== 'phong' && dept.type !== 'ban' && dept.type !== 'product') ? "font-bold text-zinc-900" : "text-zinc-600"
               )}>
                 {dept.name}
               </span>
             </div>
           </td>
-          {renderDataCells(dept, !!options.isHeaderTotal)}
+          {renderDataCells(dept, isBoldRow)}
         </tr>
       );
     }
