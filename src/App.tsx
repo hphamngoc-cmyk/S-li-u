@@ -38,6 +38,13 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [visibleCharts, setVisibleCharts] = useState<Set<string>>(new Set());
 
+  const PROFIT_INDICATORS = [
+    { id: 'netRevenue', name: 'Doanh thu' },
+    { id: 'expense', name: 'Chi phí' },
+    { id: 'pbt', name: 'Lợi nhuận' },
+    { id: 'ebitda', name: 'EBITDA' }
+  ];
+
   const toggleChart = (id: string) => {
     setVisibleCharts(prev => {
       const next = new Set(prev);
@@ -158,8 +165,42 @@ export default function App() {
       const currentMonth = dept.monthly[selectedMonth];
 
       if (dashboardTab === 'profit') {
+        const profitIndicators = PROFIT_INDICATORS.map(ind => {
+          const actualField = `${ind.id}Actual` as keyof typeof cum;
+          const planField = `${ind.id}Plan` as keyof typeof cum;
+          const lastYearField = `${ind.id}LastYear` as keyof typeof cum;
+          const annualPlanField = `annual${ind.id.charAt(0).toUpperCase() + ind.id.slice(1)}Plan` as keyof typeof cum;
+          
+          const mActual = (currentMonth as any)[actualField] || 0;
+          const mPlan = (currentMonth as any)[planField] || 0;
+          const mLastYear = (currentMonth as any)[lastYearField] || 0;
+          
+          const cActual = (cum as any)[actualField] || 0;
+          const cPlan = (cum as any)[planField] || 0;
+          const cLastYear = (cum as any)[lastYearField] || 0;
+          const cAnnualPlan = (cum as any)[annualPlanField] || 0;
+
+          return {
+            id: ind.id,
+            name: ind.name,
+            monthActual: mActual,
+            monthPlan: mPlan,
+            monthLastYear: mLastYear,
+            monthPerfVsPlan: calculatePerformance(mActual, mPlan),
+            monthPerfVsLastYear: calculatePerformance(mActual, mLastYear),
+            actual: cActual,
+            plan: cPlan,
+            lastYear: cLastYear,
+            annualPlan: cAnnualPlan,
+            perfVsPlan: calculatePerformance(cActual, cPlan),
+            perfVsLastYear: calculatePerformance(cActual, cLastYear),
+            annualCompletion: calculatePerformance(cActual, cAnnualPlan),
+          };
+        });
+
         return {
           ...dept,
+          profitIndicators,
           // Monthly
           monthActual: currentMonth.profitActual || 0,
           monthPlan: currentMonth.profitPlan || 0,
@@ -270,15 +311,24 @@ export default function App() {
     // Calculate total for centers section
     const centersTotal = {
       id: 'centers_total',
-      name: 'TỔNG TRUNG TÂM',
+      name: dashboardTab === 'profit' ? 'HỢP NHẤT CÔNG TY' : 'TỔNG TRUNG TÂM',
       type: 'company', // Use 'company' type for bold styling
-      monthActual: centers.reduce((sum, c) => sum + c.monthActual, 0),
-      monthPlan: centers.reduce((sum, c) => sum + c.monthPlan, 0),
-      monthLastYear: centers.reduce((sum, c) => sum + c.monthLastYear, 0),
-      actual: centers.reduce((sum, c) => sum + c.actual, 0),
-      plan: centers.reduce((sum, c) => sum + c.plan, 0),
-      lastYear: centers.reduce((sum, c) => sum + c.lastYear, 0),
-      annualPlan: centers.reduce((sum, c) => sum + c.annualPlan, 0),
+      monthActual: dashboardTab === 'profit' ? (company?.monthActual || 0) : centers.reduce((sum, c) => sum + c.monthActual, 0),
+      monthPlan: dashboardTab === 'profit' ? (company?.monthPlan || 0) : centers.reduce((sum, c) => sum + c.monthPlan, 0),
+      monthLastYear: dashboardTab === 'profit' ? (company?.monthLastYear || 0) : centers.reduce((sum, c) => sum + c.monthLastYear, 0),
+      actual: dashboardTab === 'profit' ? (company?.actual || 0) : centers.reduce((sum, c) => sum + c.actual, 0),
+      plan: dashboardTab === 'profit' ? (company?.plan || 0) : centers.reduce((sum, c) => sum + c.plan, 0),
+      lastYear: dashboardTab === 'profit' ? (company?.lastYear || 0) : centers.reduce((sum, c) => sum + c.lastYear, 0),
+      annualPlan: dashboardTab === 'profit' ? (company?.annualPlan || 0) : centers.reduce((sum, c) => sum + c.annualPlan, 0),
+      profitIndicators: company?.profitIndicators || [],
+      monthly: dashboardTab === 'profit' 
+        ? company?.monthly || []
+        : months.map((month, index) => ({
+            month,
+            actual: centers.reduce((sum, c) => sum + (c.monthly[index]?.actual || 0), 0),
+            plan: centers.reduce((sum, c) => sum + (c.monthly[index]?.plan || 0), 0),
+            lastYear: centers.reduce((sum, c) => sum + (c.monthly[index]?.lastYear || 0), 0),
+          }))
     };
     
     // Calculate percentages for centersTotal
@@ -317,7 +367,230 @@ export default function App() {
     return { month: monthData, cumulative: cumulativeData };
   }, [sortedOverview.productsSection, dashboardTab]);
 
-  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name }: any) => {
+  const renderDataCells = (item: any, isBold: boolean = false) => {
+    return (
+      <React.Fragment>
+        {/* Current Month */}
+        {visibleColumns.monthActual && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-right", isBold ? "font-bold text-zinc-900" : "text-zinc-600")}>
+            {formatNumber(item.monthActual)}
+          </td>
+        )}
+        {visibleColumns.monthPlan && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-zinc-500 text-right", isBold ? "font-bold" : "text-zinc-400")}>
+            {formatNumber(item.monthPlan)}
+          </td>
+        )}
+        {visibleColumns.monthPerfVsPlan && (
+          <td className="px-1 py-1.5">
+            <div className="flex items-center gap-1 justify-end">
+              <MiniProgress percentage={item.monthPerfVsPlan} />
+              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                getPerformanceTextColor(item.monthPerfVsPlan)
+              )}>
+                {formatPercent(item.monthPerfVsPlan)}
+              </span>
+            </div>
+          </td>
+        )}
+        {visibleColumns.monthLastYear && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-zinc-500 text-right", isBold ? "font-bold" : "text-zinc-400")}>
+            {formatNumber(item.monthLastYear)}
+          </td>
+        )}
+        {visibleColumns.monthPerfVsLastYear && (
+          <td className="px-1 py-1.5 border-r border-zinc-100">
+            <div className="flex items-center gap-1 justify-end">
+              <MiniProgress percentage={item.monthPerfVsLastYear} />
+              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                getPerformanceTextColor(item.monthPerfVsLastYear)
+              )}>
+                {formatPercent(item.monthPerfVsLastYear)}
+              </span>
+            </div>
+          </td>
+        )}
+        
+        {/* Cumulative */}
+        {visibleColumns.actual && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-right", isBold ? "font-bold text-zinc-900 border-l border-zinc-100/10" : "text-zinc-600 border-l border-zinc-100/10")}>
+            {formatNumber(item.actual)}
+          </td>
+        )}
+        {visibleColumns.plan && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-zinc-500 text-right", isBold ? "font-bold" : "text-zinc-400")}>
+            {formatNumber(item.plan)}
+          </td>
+        )}
+        {visibleColumns.perfVsPlan && (
+          <td className="px-1 py-1.5">
+            <div className="flex items-center gap-1 justify-end">
+              <MiniProgress percentage={item.perfVsPlan} />
+              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                getPerformanceTextColor(item.perfVsPlan)
+              )}>
+                {formatPercent(item.perfVsPlan)}
+              </span>
+            </div>
+          </td>
+        )}
+        {visibleColumns.lastYear && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-zinc-500 text-right", isBold ? "font-bold" : "text-zinc-400")}>
+            {formatNumber(item.lastYear)}
+          </td>
+        )}
+        {visibleColumns.perfVsLastYear && (
+          <td className="px-1 py-1.5 border-r border-zinc-100">
+            <div className="flex items-center gap-1 justify-end">
+              <MiniProgress percentage={item.perfVsLastYear} />
+              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                getPerformanceTextColor(item.perfVsLastYear)
+              )}>
+                {formatPercent(item.perfVsLastYear)}
+              </span>
+            </div>
+          </td>
+        )}
+        
+        {/* Annual */}
+        {visibleColumns.annualPlan && (
+          <td className={cn("px-1 py-1.5 text-[13px] text-zinc-500 text-right", isBold ? "font-bold" : "text-zinc-400")}>
+            {formatNumber(item.annualPlan)}
+          </td>
+        )}
+        {visibleColumns.annualCompletion && (
+          <td className="px-1 py-1.5">
+            <div className="flex items-center gap-1 justify-end">
+              <MiniProgress percentage={item.annualCompletion} />
+              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
+                getPerformanceTextColor(item.annualCompletion)
+              )}>
+                {formatPercent(item.annualCompletion)}
+              </span>
+            </div>
+          </td>
+        )}
+      </React.Fragment>
+    );
+  };
+
+  const renderDepartmentRowSet = (dept: any, options: { 
+    isHeaderTotal?: boolean, 
+    indent?: number, 
+    showExpand?: boolean,
+    isPhong?: boolean
+  } = {}) => {
+    const isProfitTab = dashboardTab === 'profit';
+    const hasIndicators = isProfitTab && dept.profitIndicators && dept.profitIndicators.length > 0;
+    
+    // For non-profit or when indicators are not available, render a single row
+    if (!hasIndicators) {
+      return (
+        <tr 
+          key={dept.id}
+          className={cn(
+            options.isHeaderTotal ? "bg-zinc-50/30 font-bold" : "bg-white",
+            options.isPhong ? "bg-zinc-50/10" : "",
+            "group hover:bg-zinc-50/50 transition-colors cursor-pointer"
+          )} 
+          onClick={() => setSelectedDeptId(dept.id)}
+        >
+          <td className="px-1.5 py-1.5 border-r border-zinc-100">
+            <div className={cn("flex items-center gap-2", 
+              options.indent === 1 ? "pl-2" : options.indent === 2 ? "pl-6" : "pl-0"
+            )}>
+              {options.showExpand && (
+                <button 
+                  onClick={(e) => toggleExpand(dept.id, e)}
+                  className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
+                >
+                  <ChevronDown 
+                    size={14} 
+                    className={cn("text-zinc-900 transition-transform duration-200", 
+                      !expandedDepts.has(dept.id) && "-rotate-90"
+                    )} 
+                  />
+                </button>
+              )}
+              {!options.showExpand && <div className={cn("w-1 h-1 rounded-full", options.isHeaderTotal ? "bg-zinc-900" : "bg-zinc-300")} />}
+              <span className={cn("text-[13px] truncate", 
+                options.isHeaderTotal || (dept.type !== 'phong' && dept.type !== 'ban' && dept.type !== 'product') ? "font-bold text-zinc-900" : "text-zinc-600"
+              )}>
+                {dept.name}
+              </span>
+            </div>
+          </td>
+          {renderDataCells(dept, !!options.isHeaderTotal)}
+        </tr>
+      );
+    }
+
+    // Profit tab indicators rendering
+    return (
+      <React.Fragment key={dept.id}>
+        {/* Header row for the department/center */}
+        <tr className="bg-zinc-100/40 border-b border-zinc-200 group">
+          <td 
+            className="px-1.5 py-2 border-r border-zinc-200" 
+            colSpan={1 + COLUMN_CONFIG.filter(c => visibleColumns[c.id]).length}
+          >
+            <div className="flex items-center justify-between">
+              <div className={cn("flex items-center gap-2", options.indent === 1 ? "pl-2" : "pl-0")}>
+                {options.showExpand && (
+                  <button 
+                    onClick={(e) => toggleExpand(dept.id, e)}
+                    className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
+                  >
+                    <ChevronDown 
+                      size={14} 
+                      className={cn("text-zinc-900 transition-transform duration-200", 
+                        !expandedDepts.has(dept.id) && "-rotate-90"
+                      )} 
+                    />
+                  </button>
+                )}
+                {!options.showExpand && <div className="w-1.5 h-1.5 rounded-full bg-zinc-900" />}
+                <span className="text-[13px] text-zinc-900 font-bold uppercase tracking-[0.05em]">
+                  {dept.name}
+                </span>
+              </div>
+              {options.isHeaderTotal && (
+                <div className="text-[10px] font-bold text-zinc-400 uppercase bg-white px-2 py-0.5 rounded-md border border-zinc-100 mr-2">
+                  Hợp nhất
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+        {/* The 4 indicators */}
+        {dept.profitIndicators.map((ind: any) => (
+          <tr 
+            key={`${dept.id}-${ind.id}`} 
+            className={cn(
+              "hover:bg-zinc-50/50 transition-colors border-b border-zinc-50",
+              (ind.id === 'pbt' || ind.id === 'ebitda') ? "bg-amber-50/5" : ""
+            )}
+          >
+            <td className="px-1.5 py-1.5 border-r border-zinc-100 pl-8">
+              <div className="flex items-center gap-2">
+                <div className={cn("w-1 h-1 rounded-full", 
+                  (ind.id === 'pbt' || ind.id === 'ebitda') ? "bg-amber-500" : "bg-zinc-300"
+                )} />
+                <span className={cn("text-[12px] truncate", 
+                  (ind.id === 'pbt' || ind.id === 'ebitda') ? "font-bold text-zinc-800" : "text-zinc-500 font-medium"
+                )}>
+                  {ind.name}
+                </span>
+              </div>
+            </td>
+            {renderDataCells(ind, (ind.id === 'pbt' || ind.id === 'ebitda'))}
+          </tr>
+        ))}
+      </React.Fragment>
+    );
+  };
+
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, fill }: any) => {
     const RADIAN = Math.PI / 180;
     const sin = Math.sin(-RADIAN * midAngle);
     const cos = Math.cos(-RADIAN * midAngle);
@@ -329,7 +602,8 @@ export default function App() {
     const ey = my;
     const textAnchor = cos >= 0 ? 'start' : 'end';
 
-    if (percent < 0.03) return null;
+    // Show all labels if percent is > 0.5%
+    if (percent < 0.005) return null;
 
     // If slice is large enough, put label inside
     if (percent > 0.15) {
@@ -346,8 +620,8 @@ export default function App() {
     // Otherwise, put label outside with a line
     return (
       <g>
-        <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={CHART_COLORS[0]} fill="none" />
-        <circle cx={ex} cy={ey} r={2} fill={CHART_COLORS[0]} stroke="none" />
+        <path d={`M${sx},${sy}L${mx},${my}L${ex},${ey}`} stroke={fill || CHART_COLORS[0]} fill="none" />
+        <circle cx={ex} cy={ey} r={2} fill={fill || CHART_COLORS[0]} stroke="none" />
         <text x={ex + (cos >= 0 ? 1 : -1) * 12} y={ey} textAnchor={textAnchor} fill="#333" dominantBaseline="central" className="text-[10px] font-medium">
           {`${(percent * 100).toFixed(0)}%`}
         </text>
@@ -358,19 +632,29 @@ export default function App() {
   const DepartmentCharts = ({ dept, subDepts, title }: { dept: any, subDepts: any[], title: string }) => {
     const isVisible = visibleCharts.has(dept.id);
     
-    const pieData = subDepts.map(d => ({
+    const isProfit = dashboardTab === 'profit';
+
+    const pieData = (subDepts || []).map(d => ({
       name: d.name,
-      value: d.actual || 0
+      value: isProfit ? (d.profitActual || 0) : (d.actual || 0)
     })).filter(d => d.value > 0);
 
     const lineData = months.slice(0, selectedMonth + 1).map((m, idx) => {
-      const monthData = dept.monthly[idx];
-      const isProfit = dashboardTab === 'profit';
+      const monthData = dept.monthly?.[idx] || {};
+      if (isProfit) {
+        return {
+          name: m,
+          'Doanh thu': monthData.netRevenueActual || 0,
+          'Chi phí': monthData.expenseActual || 0,
+          'Lợi nhuận': monthData.pbtActual || monthData.profitActual || 0,
+          'EBITDA': monthData.ebitdaActual || 0
+        };
+      }
       return {
         name: m,
-        actual: isProfit ? monthData.profitActual : monthData.actual,
-        plan: isProfit ? monthData.profitPlan : monthData.plan,
-        lastYear: isProfit ? monthData.profitLastYear : monthData.lastYear
+        actual: monthData.actual || 0,
+        plan: monthData.plan || 0,
+        lastYear: monthData.lastYear || 0
       };
     });
 
@@ -392,39 +676,50 @@ export default function App() {
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-6">
-                {/* Pie Chart */}
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-6">Tỷ trọng doanh thu lũy kế theo bộ phận</h3>
-                  <div className="h-[300px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={pieData}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={60}
-                          outerRadius={90}
-                          paddingAngle={5}
-                          dataKey="value"
-                          label={renderCustomizedLabel}
-                          labelLine={false}
-                        >
-                          {pieData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip formatter={(val: number) => formatNumber(val)} />
-                        <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                      </PieChart>
-                    </ResponsiveContainer>
+              <div className={cn("grid gap-6 pb-6", isProfit ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2")}>
+                {/* Pie Chart - Only for Revenue tab */}
+                {!isProfit && (
+                  <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
+                    <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-6">
+                      Tỷ trọng doanh thu theo bộ phận
+                    </h3>
+                    <div className="h-[400px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={80}
+                            outerRadius={120}
+                            paddingAngle={5}
+                            dataKey="value"
+                            label={renderCustomizedLabel}
+                            labelLine={false}
+                          >
+                            {pieData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(val: number) => formatNumber(val)} />
+                          <Legend 
+                            verticalAlign="bottom" 
+                            height={36} 
+                            iconType="circle" 
+                            formatter={(value) => <span className="text-[10px] font-medium text-zinc-600">{value}</span>}
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Line Chart */}
-                <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm">
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-6">Diễn biến doanh thu qua các tháng</h3>
-                  <div className="h-[300px]">
+                <div className={cn("bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm", isProfit && "w-full")}>
+                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-6">
+                    {isProfit ? 'Diễn biến các chỉ tiêu lợi nhuận' : 'Diễn biến doanh thu qua các tháng'}
+                  </h3>
+                  <div className="h-[400px]">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={lineData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
@@ -432,9 +727,20 @@ export default function App() {
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#999' }} tickFormatter={(val) => formatNumber(val)} />
                         <Tooltip formatter={(val: number) => formatNumber(val)} />
                         <Legend verticalAlign="top" align="right" iconType="circle" />
-                        <Line type="monotone" dataKey="actual" name="Thực tế" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
-                        <Line type="monotone" dataKey="plan" name="Kế hoạch" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#94a3b8' }} />
-                        <Line type="monotone" dataKey="lastYear" name="Cùng kỳ" stroke="#cbd5e1" strokeWidth={2} dot={{ r: 3, fill: '#cbd5e1' }} />
+                        {isProfit ? (
+                          <>
+                            <Line type="monotone" dataKey="Doanh thu" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
+                            <Line type="monotone" dataKey="Chi phí" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} />
+                            <Line type="monotone" dataKey="Lợi nhuận" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                            <Line type="monotone" dataKey="EBITDA" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 4 }} />
+                          </>
+                        ) : (
+                          <>
+                            <Line type="monotone" dataKey="actual" name="Thực tế" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
+                            <Line type="monotone" dataKey="plan" name="Kế hoạch" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#94a3b8' }} />
+                            <Line type="monotone" dataKey="lastYear" name="Cùng kỳ" stroke="#cbd5e1" strokeWidth={2} dot={{ r: 3, fill: '#cbd5e1' }} />
+                          </>
+                        )}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -524,6 +830,17 @@ export default function App() {
       setAllDepts(data);
       alert('Đã xóa toàn bộ dữ liệu và reset danh sách năm.');
       setIsYearManagementOpen(false);
+    }
+  };
+
+  const handleSeedTestData = () => {
+    if (confirm(`Bạn có muốn tạo dữ liệu mẫu cho năm ${selectedYear} để xem thử biểu đồ không? \n(Lưu ý: Dữ liệu hiện tại của năm này sẽ bị thay thế)`)) {
+      const seededData = dataService.seedTestData(selectedYear);
+      const storageKey = `corporate_dashboard_data_${selectedYear}`;
+      localStorage.setItem(storageKey, JSON.stringify(seededData));
+      setAllDepts(seededData);
+      alert('Đã tạo dữ liệu mẫu thành công.');
+      setIsYearMenuOpen(false);
     }
   };
 
@@ -716,28 +1033,39 @@ export default function App() {
   };
 
   const downloadGSheetTemplate = () => {
-    const headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear', 'Name'];
-    const data: any[] = [];
-    
     const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
+    let headers: string[] = [];
+    let data: any[] = [];
+
     if (dashboardTab === 'profit') {
+      headers = [
+        'Year', 'DeptID', 'Month', 
+        'NetRevenueActual', 'NetRevenuePlan', 'NetRevenueLastYear',
+        'ExpenseActual', 'ExpensePlan', 'ExpenseLastYear',
+        'PBTActual', 'PBTPlan', 'PBTLastYear',
+        'EBITDAActual', 'EBITDAPlan', 'EBITDALastYear',
+        'AnnualNetRevenuePlan', 'AnnualExpensePlan', 'AnnualPBTPlan', 'AnnualEBITDAPlan',
+        'Name'
+      ];
       // For profit, include Company and Centers
       const profitDepts = allDepts.filter(d => d.type === 'company' || d.type === 'center');
       profitDepts.forEach(dept => {
         monthsShort.forEach(m => {
-          data.push({
+          const row: any = {
             'Year': selectedYear,
             'DeptID': dept.id,
             'Month': m,
-            'Actual': 0,
-            'Plan': 0,
-            'LastYear': 0,
             'Name': dept.name
+          };
+          // Initialize indicators
+          headers.forEach(h => {
+            if (!row[h] && h !== 'Name') row[h] = 0;
           });
+          data.push(row);
         });
       });
     } else if (dashboardTab === 'product') {
+      headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear', 'Name'];
       // For product, include only products
       const productDepts = allDepts.filter(d => d.type === 'product');
       productDepts.forEach(dept => {
@@ -754,6 +1082,7 @@ export default function App() {
         });
       });
     } else {
+      headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear', 'Name'];
       // For revenue, include Bans and Phongs
       allDepts.forEach(dept => {
         if (dept.type === 'phong' || dept.type === 'ban') {
@@ -855,6 +1184,13 @@ export default function App() {
                       >
                         <Settings size={14} />
                         Thêm năm khai báo
+                      </button>
+                      <button
+                        onClick={handleSeedTestData}
+                        className="w-full px-3 py-2 text-left text-xs font-bold text-amber-600 hover:bg-amber-50 rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <Settings size={14} />
+                        Dùng dữ liệu mẫu
                       </button>
                       <button
                         onClick={handleClearAllData}
@@ -1197,188 +1533,10 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-50">
-                        {/* Company Row */}
-                        <tr className="bg-zinc-50/30 font-bold group hover:bg-zinc-50/50 transition-colors cursor-pointer" onClick={() => {
-                          setSelectedDeptId(sortedOverview.company.id);
-                        }}>
-                          <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
-                            <div className="flex items-center gap-2 pl-0">
-                              <button 
-                                onClick={(e) => toggleExpand(sortedOverview.company.id, e)}
-                                className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
-                              >
-                                <ChevronDown 
-                                  size={14} 
-                                  className={cn("text-zinc-900 transition-transform duration-200", 
-                                    !expandedDepts.has(sortedOverview.company.id) && "-rotate-90"
-                                  )} 
-                                />
-                              </button>
-                              <div className="w-1 h-1 rounded-full bg-zinc-900" />
-                              <span className="text-[13px] text-zinc-900 font-bold truncate">{sortedOverview.company.name}</span>
-                            </div>
-                          </td>
-                          {/* Tháng hiện tại */}
-                          {visibleColumns.monthActual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.company.monthActual)}</td>}
-                          {visibleColumns.monthPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthPlan)}</td>}
-                          {visibleColumns.monthPerfVsPlan && (
-                            <td className="px-1 py-1.5">
-                              <div className="flex items-center gap-1">
-                                <MiniProgress percentage={sortedOverview.company.monthPerfVsPlan} />
-                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(sortedOverview.company.monthPerfVsPlan)
-                                )}>
-                                  {formatPercent(sortedOverview.company.monthPerfVsPlan)}
-                                </span>
-                              </div>
-                            </td>
-                          )}
-                          {visibleColumns.monthLastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.monthLastYear)}</td>}
-                          {visibleColumns.monthPerfVsLastYear && (
-                            <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                              <div className="flex items-center gap-1">
-                                <MiniProgress percentage={sortedOverview.company.monthPerfVsLastYear} />
-                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(sortedOverview.company.monthPerfVsLastYear)
-                                )}>
-                                  {formatPercent(sortedOverview.company.monthPerfVsLastYear)}
-                                </span>
-                              </div>
-                            </td>
-                          )}
-                          {/* Lũy kế */}
-                          {visibleColumns.actual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.company.actual)}</td>}
-                          {visibleColumns.plan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.plan)}</td>}
-                          {visibleColumns.perfVsPlan && (
-                            <td className="px-1 py-1.5">
-                              <div className="flex items-center gap-1">
-                                <MiniProgress percentage={sortedOverview.company.perfVsPlan} />
-                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(sortedOverview.company.perfVsPlan)
-                                )}>
-                                  {formatPercent(sortedOverview.company.perfVsPlan)}
-                                </span>
-                              </div>
-                            </td>
-                          )}
-                          {visibleColumns.lastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.lastYear)}</td>}
-                          {visibleColumns.perfVsLastYear && (
-                            <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                              <div className="flex items-center gap-1">
-                                <MiniProgress percentage={sortedOverview.company.perfVsLastYear} />
-                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(sortedOverview.company.perfVsLastYear)
-                                )}>
-                                  {formatPercent(sortedOverview.company.perfVsLastYear)}
-                                </span>
-                              </div>
-                            </td>
-                          )}
-                          {/* Năm */}
-                          {visibleColumns.annualPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.company.annualPlan)}</td>}
-                          {visibleColumns.annualCompletion && (
-                            <td className="px-1 py-1.5">
-                              <div className="flex items-center gap-1">
-                                <MiniProgress percentage={sortedOverview.company.annualCompletion} />
-                                <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(sortedOverview.company.annualCompletion)
-                                )}>
-                                  {formatPercent(sortedOverview.company.annualCompletion)}
-                                </span>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                        {/* Ban Rows */}
+                        {renderDepartmentRowSet(sortedOverview.company, { isHeaderTotal: true, showExpand: true })}
                         <AnimatePresence initial={false}>
-                          {expandedDepts.has(sortedOverview.company.id) && sortedOverview.bansSection.filter(d => d.type === 'ban').map((dept: any) => (
-                            <motion.tr 
-                              key={dept.id} 
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="group hover:bg-zinc-50/50 transition-colors cursor-pointer overflow-hidden" 
-                              onClick={() => {
-                                setSelectedDeptId(dept.id);
-                              }}
-                            >
-                              <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
-                                <div className="flex items-center gap-2 pl-6">
-                                  <div className="w-1 h-1 rounded-full bg-amber-500" />
-                                  <span className="text-[12px] text-zinc-900 font-normal truncate">{dept.name}</span>
-                                </div>
-                              </td>
-                              {/* Tháng hiện tại */}
-                              {visibleColumns.monthActual && <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(dept.monthActual)}</td>}
-                              {visibleColumns.monthPlan && <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthPlan)}</td>}
-                              {visibleColumns.monthPerfVsPlan && (
-                                <td className="px-1 py-1.5">
-                                  <div className="flex items-center gap-1">
-                                    <MiniProgress percentage={dept.monthPerfVsPlan} />
-                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                      getPerformanceTextColor(dept.monthPerfVsPlan)
-                                    )}>
-                                      {formatPercent(dept.monthPerfVsPlan)}
-                                    </span>
-                                  </div>
-                                </td>
-                              )}
-                              {visibleColumns.monthLastYear && <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.monthLastYear)}</td>}
-                              {visibleColumns.monthPerfVsLastYear && (
-                                <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                  <div className="flex items-center gap-1">
-                                    <MiniProgress percentage={dept.monthPerfVsLastYear} />
-                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                      getPerformanceTextColor(dept.monthPerfVsLastYear)
-                                    )}>
-                                      {formatPercent(dept.monthPerfVsLastYear)}
-                                    </span>
-                                  </div>
-                                </td>
-                              )}
-                              {/* Lũy kế */}
-                              {visibleColumns.actual && <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(dept.actual)}</td>}
-                              {visibleColumns.plan && <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.plan)}</td>}
-                              {visibleColumns.perfVsPlan && (
-                                <td className="px-1 py-1.5">
-                                  <div className="flex items-center gap-1">
-                                    <MiniProgress percentage={dept.perfVsPlan} />
-                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                      getPerformanceTextColor(dept.perfVsPlan)
-                                    )}>
-                                      {formatPercent(dept.perfVsPlan)}
-                                    </span>
-                                  </div>
-                                </td>
-                              )}
-                              {visibleColumns.lastYear && <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.lastYear)}</td>}
-                              {visibleColumns.perfVsLastYear && (
-                                <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                  <div className="flex items-center gap-1">
-                                    <MiniProgress percentage={dept.perfVsLastYear} />
-                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                      getPerformanceTextColor(dept.perfVsLastYear)
-                                    )}>
-                                      {formatPercent(dept.perfVsLastYear)}
-                                    </span>
-                                  </div>
-                                </td>
-                              )}
-                              {/* Năm */}
-                              {visibleColumns.annualPlan && <td className="px-1 py-1.5 text-[12px] text-zinc-500 text-right font-normal">{formatNumber(dept.annualPlan)}</td>}
-                              {visibleColumns.annualCompletion && (
-                                <td className="px-1 py-1.5">
-                                  <div className="flex items-center gap-1">
-                                    <MiniProgress percentage={dept.annualCompletion} />
-                                    <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                      getPerformanceTextColor(dept.annualCompletion)
-                                    )}>
-                                      {formatPercent(dept.annualCompletion)}
-                                    </span>
-                                  </div>
-                                </td>
-                              )}
-                            </motion.tr>
+                          {expandedDepts.has(sortedOverview.company.id) && sortedOverview.bansSection.filter((d: any) => d.type === 'ban').map((dept: any) => (
+                            renderDepartmentRowSet(dept, { indent: 1 })
                           ))}
                         </AnimatePresence>
                       </tbody>
@@ -1434,117 +1592,38 @@ export default function App() {
                         )}
                       </tr>
                       <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
-                        {visibleColumns.monthActual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>}
-                        {visibleColumns.monthPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>}
+                        {visibleColumns.monthActual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>}
+                        {visibleColumns.monthPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>}
                         {visibleColumns.monthPerfVsPlan && <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>}
-                        {visibleColumns.monthLastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>}
+                        {visibleColumns.monthLastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>}
                         {visibleColumns.monthPerfVsLastYear && <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>}
                         
-                        {visibleColumns.actual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>}
-                        {visibleColumns.plan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>}
+                        {visibleColumns.actual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>}
+                        {visibleColumns.plan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>}
                         {visibleColumns.perfVsPlan && <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>}
-                        {visibleColumns.lastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>}
+                        {visibleColumns.lastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>}
                         {visibleColumns.perfVsLastYear && <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>}
                         
-                        {visibleColumns.annualPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH Năm LN' : 'KH Năm'}</th>}
+                        {visibleColumns.annualPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH Năm</th>}
                         {visibleColumns.annualCompletion && <th className="px-1 py-2 text-center">% HT</th>}
                       </tr>
                     </thead>
                     <tbody>
-                      <tr className="bg-zinc-50/30 font-bold group hover:bg-zinc-50/50 transition-colors cursor-pointer" onClick={() => {
-                        setSelectedDeptId(sortedOverview.centersTotal.id);
-                      }}>
-                        <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
-                          <div className="flex items-center gap-2 pl-0">
-                            <button 
-                              onClick={(e) => toggleExpand(sortedOverview.centersTotal.id, e)}
-                              className="p-0.5 hover:bg-zinc-200 rounded transition-colors"
-                            >
-                              <ChevronDown 
-                                size={14} 
-                                className={cn("text-zinc-900 transition-transform duration-200", 
-                                  !expandedDepts.has(sortedOverview.centersTotal.id) && "-rotate-90"
-                                )} 
-                              />
-                            </button>
-                            <div className="w-1 h-1 rounded-full bg-zinc-900" />
-                            <span className="text-[13px] text-zinc-900 font-bold truncate">{sortedOverview.centersTotal.name}</span>
-                          </div>
-                        </td>
-                        {/* Tháng hiện tại */}
-                        {visibleColumns.monthActual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.centersTotal.monthActual)}</td>}
-                        {visibleColumns.monthPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.monthPlan)}</td>}
-                        {visibleColumns.monthPerfVsPlan && (
-                          <td className="px-1 py-1.5">
-                            <div className="flex items-center gap-1">
-                              <MiniProgress percentage={sortedOverview.centersTotal.monthPerfVsPlan} />
-                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                getPerformanceTextColor(sortedOverview.centersTotal.monthPerfVsPlan)
-                              )}>
-                                {formatPercent(sortedOverview.centersTotal.monthPerfVsPlan)}
-                              </span>
-                            </div>
-                          </td>
-                        )}
-                        {visibleColumns.monthLastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.monthLastYear)}</td>}
-                        {visibleColumns.monthPerfVsLastYear && (
-                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                            <div className="flex items-center gap-1">
-                              <MiniProgress percentage={sortedOverview.centersTotal.monthPerfVsLastYear} />
-                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                getPerformanceTextColor(sortedOverview.centersTotal.monthPerfVsLastYear)
-                              )}>
-                                {formatPercent(sortedOverview.centersTotal.monthPerfVsLastYear)}
-                              </span>
-                            </div>
-                          </td>
-                        )}
-                        {/* Lũy kế */}
-                        {visibleColumns.actual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(sortedOverview.centersTotal.actual)}</td>}
-                        {visibleColumns.plan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.plan)}</td>}
-                        {visibleColumns.perfVsPlan && (
-                          <td className="px-1 py-1.5">
-                            <div className="flex items-center gap-1">
-                              <MiniProgress percentage={sortedOverview.centersTotal.perfVsPlan} />
-                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                getPerformanceTextColor(sortedOverview.centersTotal.perfVsPlan)
-                              )}>
-                                {formatPercent(sortedOverview.centersTotal.perfVsPlan)}
-                              </span>
-                            </div>
-                          </td>
-                        )}
-                        {visibleColumns.lastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.lastYear)}</td>}
-                        {visibleColumns.perfVsLastYear && (
-                          <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                            <div className="flex items-center gap-1">
-                              <MiniProgress percentage={sortedOverview.centersTotal.perfVsLastYear} />
-                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                getPerformanceTextColor(sortedOverview.centersTotal.perfVsLastYear)
-                              )}>
-                                {formatPercent(sortedOverview.centersTotal.perfVsLastYear)}
-                              </span>
-                            </div>
-                          </td>
-                        )}
-                        {/* Năm */}
-                        {visibleColumns.annualPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(sortedOverview.centersTotal.annualPlan)}</td>}
-                        {visibleColumns.annualCompletion && (
-                          <td className="px-1 py-1.5">
-                            <div className="flex items-center gap-1">
-                              <MiniProgress percentage={sortedOverview.centersTotal.annualCompletion} />
-                              <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                getPerformanceTextColor(sortedOverview.centersTotal.annualCompletion)
-                              )}>
-                                {formatPercent(sortedOverview.centersTotal.annualCompletion)}
-                              </span>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
+                      {renderDepartmentRowSet(sortedOverview.centersTotal, { isHeaderTotal: true, showExpand: true })}
                     </tbody>
                   </table>
                 </div>
+
+                {dashboardTab === 'profit' && (
+                  <div className="mb-6">
+                    <DepartmentCharts 
+                      dept={sortedOverview.centersTotal} 
+                      subDepts={sortedOverview.centersSection.filter((d: any) => d.type === 'center')} 
+                      title="Hợp nhất Lợi nhuận"
+                    />
+                  </div>
+                )}
+
                   {/* Center Groups (Separate Boxes) */}
                   <AnimatePresence initial={false}>
                     {(dashboardTab === 'profit' || expandedDepts.has(sortedOverview.centersTotal.id)) && (
@@ -1577,209 +1656,41 @@ export default function App() {
                             )}
                           </tr>
                           <tr className="bg-zinc-100 text-[11px] font-bold text-zinc-700 uppercase tracking-wider border-b border-zinc-300">
-                            {visibleColumns.monthActual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>}
-                            {visibleColumns.monthPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>}
+                            {visibleColumns.monthActual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>}
+                            {visibleColumns.monthPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>}
                             {visibleColumns.monthPerfVsPlan && <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>}
-                            {visibleColumns.monthLastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>}
+                            {visibleColumns.monthLastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>}
                             {visibleColumns.monthPerfVsLastYear && <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>}
                             
-                            {visibleColumns.actual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Thực tế LN' : 'Thực tế'}</th>}
-                            {visibleColumns.plan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH LN' : 'KH'}</th>}
+                            {visibleColumns.actual && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Thực tế</th>}
+                            {visibleColumns.plan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH</th>}
                             {visibleColumns.perfVsPlan && <th className="px-1 py-2 text-center border-r border-zinc-300/50">% KH</th>}
-                            {visibleColumns.lastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'Cùng kỳ LN' : 'Cùng kỳ'}</th>}
+                            {visibleColumns.lastYear && <th className="px-1 py-2 text-right border-r border-zinc-300/50">Cùng kỳ</th>}
                             {visibleColumns.perfVsLastYear && <th className="px-1 py-2 border-r border-zinc-300 text-center">% CK</th>}
                             
-                            {visibleColumns.annualPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">{dashboardTab === 'profit' ? 'KH Năm LN' : 'KH Năm'}</th>}
+                            {visibleColumns.annualPlan && <th className="px-1 py-2 text-right border-r border-zinc-300/50">KH Năm</th>}
                             {visibleColumns.annualCompletion && <th className="px-1 py-2 text-center">% HT</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-zinc-50">
-                          {/* Center Row */}
-                          <tr className="bg-blue-50/30 group hover:bg-blue-50/50 transition-colors cursor-pointer" onClick={() => {
-                            setSelectedDeptId(center.id);
-                          }}>
-                            <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
-                              <div className="flex items-center gap-2 pl-4">
-                                <button 
-                                  onClick={(e) => toggleExpand(center.id, e)}
-                                  className="p-0.5 hover:bg-blue-100 rounded transition-colors"
-                                >
-                                  <ChevronDown 
-                                    size={14} 
-                                    className={cn("text-blue-500 transition-transform duration-200", 
-                                      !expandedDepts.has(center.id) && "-rotate-90"
-                                    )} 
-                                  />
-                                </button>
-                                <div className="w-1 h-1 rounded-full bg-blue-500" />
-                                <span className="text-[13px] text-zinc-900 font-bold truncate">{center.name}</span>
-                              </div>
-                            </td>
-                            {/* Tháng hiện tại */}
-                            {visibleColumns.monthActual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(center.monthActual)}</td>}
-                            {visibleColumns.monthPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.monthPlan)}</td>}
-                            {visibleColumns.monthPerfVsPlan && (
-                              <td className="px-1 py-1.5">
-                                <div className="flex items-center gap-1">
-                                  <MiniProgress percentage={center.monthPerfVsPlan} />
-                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                    getPerformanceTextColor(center.monthPerfVsPlan)
-                                  )}>
-                                    {formatPercent(center.monthPerfVsPlan)}
-                                  </span>
-                                </div>
-                              </td>
-                            )}
-                            {visibleColumns.monthLastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.monthLastYear)}</td>}
-                            {visibleColumns.monthPerfVsLastYear && (
-                              <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                <div className="flex items-center gap-1">
-                                  <MiniProgress percentage={center.monthPerfVsLastYear} />
-                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                    getPerformanceTextColor(center.monthPerfVsLastYear)
-                                  )}>
-                                    {formatPercent(center.monthPerfVsLastYear)}
-                                  </span>
-                                </div>
-                              </td>
-                            )}
-                            {/* Lũy kế */}
-                            {visibleColumns.actual && <td className="px-1 py-1.5 text-[13px] font-bold text-right">{formatNumber(center.actual)}</td>}
-                            {visibleColumns.plan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.plan)}</td>}
-                            {visibleColumns.perfVsPlan && (
-                              <td className="px-1 py-1.5">
-                                <div className="flex items-center gap-1">
-                                  <MiniProgress percentage={center.perfVsPlan} />
-                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                    getPerformanceTextColor(center.perfVsPlan)
-                                  )}>
-                                    {formatPercent(center.perfVsPlan)}
-                                  </span>
-                                </div>
-                              </td>
-                            )}
-                            {visibleColumns.lastYear && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.lastYear)}</td>}
-                            {visibleColumns.perfVsLastYear && (
-                              <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                <div className="flex items-center gap-1">
-                                  <MiniProgress percentage={center.perfVsLastYear} />
-                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                    getPerformanceTextColor(center.perfVsLastYear)
-                                  )}>
-                                    {formatPercent(center.perfVsLastYear)}
-                                  </span>
-                                </div>
-                              </td>
-                            )}
-                            {/* Năm */}
-                            {visibleColumns.annualPlan && <td className="px-1 py-1.5 text-[13px] text-zinc-500 text-right font-bold">{formatNumber(center.annualPlan)}</td>}
-                            {visibleColumns.annualCompletion && (
-                              <td className="px-1 py-1.5">
-                                <div className="flex items-center gap-1">
-                                  <MiniProgress percentage={center.annualCompletion} />
-                                  <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                    getPerformanceTextColor(center.annualCompletion)
-                                  )}>
-                                    {formatPercent(center.annualCompletion)}
-                                  </span>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                          {/* Phong Rows */}
+                          {renderDepartmentRowSet(center, { indent: 1, showExpand: dashboardTab === 'revenue' })}
                           <AnimatePresence initial={false}>
-                            {dashboardTab === 'revenue' && expandedDepts.has(center.id) && center.phongs.map((phong: any) => (
-                              <motion.tr 
-                                key={phong.id} 
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="group hover:bg-zinc-50/50 transition-colors cursor-pointer overflow-hidden" 
-                                onClick={() => {
-                                  setSelectedDeptId(phong.id);
-                                }}
-                              >
-                                <td className="px-1.5 py-1.5 border-r border-zinc-50/50">
-                                  <div className="flex items-center gap-2 pl-12">
-                                    <div className="w-1 h-1 rounded-full bg-zinc-300" />
-                                    <span className="text-[12px] text-zinc-600 font-normal truncate">{phong.name}</span>
-                                  </div>
-                                </td>
-                                {/* Tháng hiện tại */}
-                                {visibleColumns.monthActual && <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(phong.monthActual)}</td>}
-                                {visibleColumns.monthPlan && <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.monthPlan)}</td>}
-                                {visibleColumns.monthPerfVsPlan && (
-                                  <td className="px-1 py-1.5">
-                                    <div className="flex items-center gap-1">
-                                      <MiniProgress percentage={phong.monthPerfVsPlan} />
-                                      <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                        getPerformanceTextColor(phong.monthPerfVsPlan)
-                                      )}>
-                                        {formatPercent(phong.monthPerfVsPlan)}
-                                      </span>
-                                    </div>
-                                  </td>
-                                )}
-                                {visibleColumns.monthLastYear && <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.monthLastYear)}</td>}
-                                {visibleColumns.monthPerfVsLastYear && (
-                                  <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                    <div className="flex items-center gap-1">
-                                      <MiniProgress percentage={phong.monthPerfVsLastYear} />
-                                      <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                        getPerformanceTextColor(phong.monthPerfVsLastYear)
-                                      )}>
-                                        {formatPercent(phong.monthPerfVsLastYear)}
-                                      </span>
-                                    </div>
-                                  </td>
-                                )}
-                                {/* Lũy kế */}
-                                {visibleColumns.actual && <td className="px-1 py-1.5 text-[12px] font-normal text-right">{formatNumber(phong.actual)}</td>}
-                                {visibleColumns.plan && <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.plan)}</td>}
-                                {visibleColumns.perfVsPlan && (
-                                  <td className="px-1 py-1.5">
-                                    <div className="flex items-center gap-1">
-                                      <MiniProgress percentage={phong.perfVsPlan} />
-                                      <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                        getPerformanceTextColor(phong.perfVsPlan)
-                                      )}>
-                                        {formatPercent(phong.perfVsPlan)}
-                                      </span>
-                                    </div>
-                                  </td>
-                                )}
-                                {visibleColumns.lastYear && <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.lastYear)}</td>}
-                                {visibleColumns.perfVsLastYear && (
-                                  <td className="px-1 py-1.5 border-r border-zinc-50/50">
-                                    <div className="flex items-center gap-1">
-                                      <MiniProgress percentage={phong.perfVsLastYear} />
-                                      <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                        getPerformanceTextColor(phong.perfVsLastYear)
-                                      )}>
-                                        {formatPercent(phong.perfVsLastYear)}
-                                      </span>
-                                    </div>
-                                  </td>
-                                )}
-                                {/* Năm */}
-                                {visibleColumns.annualPlan && <td className="px-1 py-1.5 text-[12px] text-zinc-400 font-normal text-right">{formatNumber(phong.annualPlan)}</td>}
-                                {visibleColumns.annualCompletion && (
-                                  <td className="px-1 py-1.5">
-                                    <div className="flex items-center gap-1">
-                                      <MiniProgress percentage={phong.annualCompletion} />
-                                      <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                        getPerformanceTextColor(phong.annualCompletion)
-                                      )}>
-                                        {formatPercent(phong.annualCompletion)}
-                                      </span>
-                                    </div>
-                                  </td>
-                                )}
-                              </motion.tr>
+                            {dashboardTab === 'revenue' && expandedDepts.has(center.id) && center.phongs?.map((phong: any) => (
+                              renderDepartmentRowSet(phong, { indent: 2, isPhong: true })
                             ))}
                           </AnimatePresence>
                         </tbody>
                       </table>
+
+                      {dashboardTab !== 'product' && (
+                        <div className="px-6 pb-6">
+                          <DepartmentCharts 
+                            dept={center} 
+                            subDepts={center.phongs} 
+                            title={`Bộ phận ${center.name}`}
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </motion.div>
@@ -1958,7 +1869,7 @@ export default function App() {
                                 Tỷ trọng doanh thu thực tế tháng {months[selectedMonth]}
                               </h3>
                             </div>
-                            <div className="h-[350px] w-full">
+                            <div className="h-[400px] w-full">
                               {productChartData.month.length > 0 ? (
                                 <ResponsiveContainer width="100%" height="100%">
                                   <PieChart>
@@ -1987,7 +1898,7 @@ export default function App() {
                                       verticalAlign="bottom" 
                                       height={36}
                                       iconType="circle"
-                                      formatter={(value) => <span className="text-[11px] font-medium text-zinc-600">{value}</span>}
+                                      formatter={(value) => <span className="text-[10px] font-medium text-zinc-600">{value}</span>}
                                     />
                                   </PieChart>
                                 </ResponsiveContainer>
@@ -2007,7 +1918,7 @@ export default function App() {
                                 Tỷ trọng doanh thu thực tế lũy kế
                               </h3>
                             </div>
-                            <div className="h-[350px] w-full">
+                            <div className="h-[400px] w-full">
                               {productChartData.cumulative.length > 0 ? (
                                 <ResponsiveContainer width="100%" height="100%">
                                   <PieChart>
@@ -2036,7 +1947,7 @@ export default function App() {
                                       verticalAlign="bottom" 
                                       height={36}
                                       iconType="circle"
-                                      formatter={(value) => <span className="text-[11px] font-medium text-zinc-600">{value}</span>}
+                                      formatter={(value) => <span className="text-[10px] font-medium text-zinc-600">{value}</span>}
                                     />
                                   </PieChart>
                                 </ResponsiveContainer>
@@ -2370,7 +2281,7 @@ export default function App() {
                       <TableIcon size={20} className={selectedExportIds.includes('section-centers') ? "text-white/60" : "text-zinc-400"} />
                       {selectedExportIds.includes('section-centers') && <Check size={16} />}
                     </div>
-                    <span className="text-sm font-bold">Bảng Tổng Trung tâm</span>
+                    <span className="text-sm font-bold">{dashboardTab === 'profit' ? 'Bảng Hợp nhất Công ty' : 'Bảng Tổng Trung tâm'}</span>
                   </button>
 
                   {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (

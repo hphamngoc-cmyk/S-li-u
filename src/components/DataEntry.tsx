@@ -17,10 +17,18 @@ interface DataEntryProps {
 
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const PROFIT_INDICATORS = [
+  { id: 'netRevenue', name: 'Doanh thu thuần' },
+  { id: 'expense', name: 'Chi phí' },
+  { id: 'pbt', name: 'Lợi nhuận trước thuế' },
+  { id: 'ebitda', name: 'EBITDA' }
+];
+
 export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = 'revenue', gsheetConfig, onSave, onClose }) => {
   const [localData, setLocalData] = useState<DepartmentData[]>(JSON.parse(JSON.stringify(data)));
   const [activeDeptId, setActiveDeptId] = useState(data[0]?.id || 'all');
   const [entryTab, setEntryTab] = useState<'revenue' | 'profit' | 'product'>(initialTab);
+  const [profitIndicator, setProfitIndicator] = useState<string>('pbt');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -77,11 +85,15 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
         const plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
         const lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
 
-        // Profit: Only from Centers
-        const centers = children.filter((d: any) => d.type === 'center');
-        const profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
-        const profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
-        const profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
+        // Profit: NO LONGER aggregated for Company - as per user request to be independent
+        // profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
+        // profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
+        // profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
+        
+        // Keep Company's own profit values entered by user
+        const profitActual = company.monthly[index].profitActual || 0;
+        const profitPlan = company.monthly[index].profitPlan || 0;
+        const profitLastYear = company.monthly[index].profitLastYear || 0;
         
         return { month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear };
       });
@@ -156,10 +168,16 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
 
     const newData = [...localData];
     const targetField = entryTab === 'profit' 
-      ? (field === 'actual' ? 'profitActual' : field === 'plan' ? 'profitPlan' : 'profitLastYear')
+      ? (`${profitIndicator}${field.charAt(0).toUpperCase() + field.slice(1)}`)
       : field;
     
     (newData[activeDeptIndex].monthly[monthIndex] as any)[targetField] = numValue;
+
+    // If updating pbt, also update the main profit field for compatibility with older parts of the app
+    if (entryTab === 'profit' && profitIndicator === 'pbt') {
+      const pField = field === 'actual' ? 'profitActual' : field === 'plan' ? 'profitPlan' : 'profitLastYear';
+      (newData[activeDeptIndex].monthly[monthIndex] as any)[pField] = numValue;
+    }
     
     // Recalculate all totals
     const aggregatedData = recalculateTotals(newData);
@@ -291,7 +309,11 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
         monthly: dept.monthly.map(m => ({ 
           ...m, 
           actual: 0, plan: 0, lastYear: 0,
-          profitActual: 0, profitPlan: 0, profitLastYear: 0
+          profitActual: 0, profitPlan: 0, profitLastYear: 0,
+          netRevenueActual: 0, netRevenuePlan: 0, netRevenueLastYear: 0,
+          expenseActual: 0, expensePlan: 0, expenseLastYear: 0,
+          pbtActual: 0, pbtPlan: 0, pbtLastYear: 0,
+          ebitdaActual: 0, ebitdaPlan: 0, ebitdaLastYear: 0
         }))
       }));
       setLocalData(resetData);
@@ -385,6 +407,22 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                   Sản phẩm TMC
                 </button>
               </div>
+
+              {entryTab === 'profit' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Chỉ tiêu:</span>
+                  <select
+                    value={profitIndicator}
+                    onChange={(e) => setProfitIndicator(e.target.value)}
+                    className="px-4 py-2 bg-white border border-zinc-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-zinc-900 outline-none"
+                  >
+                    {PROFIT_INDICATORS.map(ind => (
+                      <option key={ind.id} value={ind.id}>{ind.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              
               <div className="flex gap-2">
                 {((entryTab === 'revenue' && gsheetConfig?.sheetId) || 
                   (entryTab === 'profit' && gsheetConfig?.profitSheetId) || 
@@ -505,59 +543,83 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                 <thead className="bg-zinc-100 text-zinc-900 font-bold uppercase text-[11px] tracking-widest border-b border-zinc-200">
                   <tr>
                     <th className="px-4 py-4">Tháng</th>
-                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Thực tế' : 'Thực tế'} ({year})</th>
-                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Kế hoạch' : 'Kế hoạch'} ({year})</th>
-                    <th className="px-4 py-4 text-right">{entryTab === 'profit' ? 'LN Cùng kỳ' : 'Thực tế'} ({year - 1})</th>
+                    <th className="px-4 py-4 text-right">
+                      {entryTab === 'profit' 
+                        ? `${PROFIT_INDICATORS.find(i => i.id === profitIndicator)?.name} Thực tế` 
+                        : 'Thực tế'} ({year})
+                    </th>
+                    <th className="px-4 py-4 text-right">
+                      {entryTab === 'profit' 
+                        ? `${PROFIT_INDICATORS.find(i => i.id === profitIndicator)?.name} Kế hoạch` 
+                        : 'Kế hoạch'} ({year})
+                    </th>
+                    <th className="px-4 py-4 text-right">
+                      {entryTab === 'profit' 
+                        ? `${PROFIT_INDICATORS.find(i => i.id === profitIndicator)?.name} Cùng kỳ` 
+                        : 'Thực tế'} ({year - 1})
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
-                  {activeDept.monthly.map((m, idx) => (
-                    <tr key={m.month} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-4 py-3 font-bold text-zinc-900">{m.month}</td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="text" 
-                          value={(entryTab === 'profit' ? (m.profitActual || 0) : m.actual) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitActual || 0) : m.actual)}
-                          onChange={(e) => handleValueChange(idx, 'actual', e.target.value)}
-                          disabled={isParent}
-                          className={cn(
-                            "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
-                            isParent 
-                              ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
-                              : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
-                          )}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="text" 
-                          value={(entryTab === 'profit' ? (m.profitPlan || 0) : m.plan) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitPlan || 0) : m.plan)}
-                          onChange={(e) => handleValueChange(idx, 'plan', e.target.value)}
-                          disabled={isParent}
-                          className={cn(
-                            "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
-                            isParent 
-                              ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
-                              : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
-                          )}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input 
-                          type="text" 
-                          value={(entryTab === 'profit' ? (m.profitLastYear || 0) : m.lastYear) === 0 ? '0' : formatNumber(entryTab === 'profit' ? (m.profitLastYear || 0) : m.lastYear)}
-                          onChange={(e) => handleValueChange(idx, 'lastYear', e.target.value)}
-                          disabled={isParent}
-                          className={cn(
-                            "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
-                            isParent 
-                              ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
-                              : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
-                          )}
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {activeDept.monthly.map((m, idx) => {
+                    const currentActual = entryTab === 'profit' 
+                      ? ((m as any)[`${profitIndicator}Actual`] || 0) 
+                      : m.actual;
+                    const currentPlan = entryTab === 'profit' 
+                      ? ((m as any)[`${profitIndicator}Plan`] || 0) 
+                      : m.plan;
+                    const currentLastYear = entryTab === 'profit' 
+                      ? ((m as any)[`${profitIndicator}LastYear`] || 0) 
+                      : m.lastYear;
+
+                    return (
+                      <tr key={m.month} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="px-4 py-3 font-bold text-zinc-900">{m.month}</td>
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={currentActual === 0 ? '0' : formatNumber(currentActual)}
+                            onChange={(e) => handleValueChange(idx, 'actual', e.target.value)}
+                            disabled={isParent}
+                            className={cn(
+                              "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
+                              isParent 
+                                ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
+                                : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
+                            )}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={currentPlan === 0 ? '0' : formatNumber(currentPlan)}
+                            onChange={(e) => handleValueChange(idx, 'plan', e.target.value)}
+                            disabled={isParent}
+                            className={cn(
+                              "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
+                              isParent 
+                                ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
+                                : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
+                            )}
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={currentLastYear === 0 ? '0' : formatNumber(currentLastYear)}
+                            onChange={(e) => handleValueChange(idx, 'lastYear', e.target.value)}
+                            disabled={isParent}
+                            className={cn(
+                              "w-full px-3 py-2 border rounded-lg outline-none text-right font-medium transition-all",
+                              isParent 
+                                ? "bg-zinc-50 border-zinc-100 text-zinc-400 cursor-not-allowed" 
+                                : "bg-white border-zinc-200 focus:ring-2 focus:ring-zinc-900 text-zinc-900"
+                            )}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

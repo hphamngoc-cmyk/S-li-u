@@ -7,6 +7,23 @@ export interface MonthlyData {
   profitActual?: number;
   profitPlan?: number;
   profitLastYear?: number;
+
+  // Detailed Profit indicators
+  netRevenueActual?: number;
+  netRevenuePlan?: number;
+  netRevenueLastYear?: number;
+  
+  expenseActual?: number;
+  expensePlan?: number;
+  expenseLastYear?: number;
+
+  pbtActual?: number;
+  pbtPlan?: number;
+  pbtLastYear?: number;
+
+  ebitdaActual?: number;
+  ebitdaPlan?: number;
+  ebitdaLastYear?: number;
 }
 
 export interface DepartmentData {

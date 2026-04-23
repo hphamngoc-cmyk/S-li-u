@@ -27,7 +27,19 @@ const generateInitialData = (year: number): DepartmentData[] => {
     lastYear: 0,
     profitActual: 0,
     profitPlan: 0,
-    profitLastYear: 0
+    profitLastYear: 0,
+    netRevenueActual: 0,
+    netRevenuePlan: 0,
+    netRevenueLastYear: 0,
+    expenseActual: 0,
+    expensePlan: 0,
+    expenseLastYear: 0,
+    pbtActual: 0,
+    pbtPlan: 0,
+    pbtLastYear: 0,
+    ebitdaActual: 0,
+    ebitdaPlan: 0,
+    ebitdaLastYear: 0
   }));
 
   const rawData: any[] = [
@@ -284,6 +296,23 @@ export const dataService = {
     const profitActualIdx = headers.findIndex(h => h.includes('profitactual') || h.includes('lợinhuậnthựctế') || h.includes('lnthựctế'));
     const profitPlanIdx = headers.findIndex(h => h.includes('profitplan') || h.includes('lợinhuậnkếhoạch') || h.includes('lnkh'));
     const profitLastYearIdx = headers.findIndex(h => h.includes('profitlastyear') || h.includes('lợinhuậncùngkỳ') || h.includes('lnck'));
+    
+    // New Profit Indicators
+    const netRevenueActualIdx = headers.findIndex(h => h.includes('netrevenueactual') || h.includes('doanhthuthuầnthựctế') || h.includes('dtthuầnthựctế') || h.includes('doanhthuthựctế'));
+    const netRevenuePlanIdx = headers.findIndex(h => h.includes('netrevenueplan') || h.includes('doanhthuthuầnkếhoạch') || h.includes('dtthuầnkh') || h.includes('doanhthukh'));
+    const netRevenueLastYearIdx = headers.findIndex(h => h.includes('netrevenuelastyear') || h.includes('doanhthuthuầncùngkỳ') || h.includes('dtthuầnck') || h.includes('doanhthuck'));
+    
+    const expenseActualIdx = headers.findIndex(h => h.includes('expenseactual') || h.includes('chiphíthựctế') || h.includes('cpthựctế'));
+    const expensePlanIdx = headers.findIndex(h => h.includes('expenseplan') || h.includes('chiphíkếhoạch') || h.includes('cpkh'));
+    const expenseLastYearIdx = headers.findIndex(h => h.includes('expenselastyear') || h.includes('chiphícùngkỳ') || h.includes('cpck'));
+    
+    const pbtActualIdx = headers.findIndex(h => h.includes('pbtactual') || h.includes('lợinhuậntrướcthuếthựctế') || h.includes('lnttthựctế') || h.includes('lợinhuậnthựctế'));
+    const pbtPlanIdx = headers.findIndex(h => h.includes('pbtplan') || h.includes('lợinhuậntrướcthuếkếhoạch') || h.includes('lnttkh') || h.includes('lợinhuậnkh'));
+    const pbtLastYearIdx = headers.findIndex(h => h.includes('pbtlastyear') || h.includes('lợinhuậntrướcthuếcùngkỳ') || h.includes('lnttck') || h.includes('lợinhuậnck'));
+    
+    const ebitdaActualIdx = headers.findIndex(h => h.includes('ebitdaactual') || h.includes('ebitdathựctế'));
+    const ebitdaPlanIdx = headers.findIndex(h => h.includes('ebitdaplan') || h.includes('ebitdakếhoạch'));
+    const ebitdaLastYearIdx = headers.findIndex(h => h.includes('ebitdalastyear') || h.includes('ebitdacùngkỳ'));
 
     if (yearIdx === -1 || (deptIdIdx === -1 && nameIdx === -1) || monthIdx === -1) {
       throw new Error('Cấu trúc file không đúng. Cần có các cột: Year, DeptID (hoặc Name), Month, Actual, Plan, LastYear');
@@ -357,6 +386,22 @@ export const dataService = {
       const profitPlan = profitPlanIdx !== -1 ? parseLocaleNumber(row[profitPlanIdx]) : 0;
       const profitLastYear = profitLastYearIdx !== -1 ? parseLocaleNumber(row[profitLastYearIdx]) : 0;
 
+      const netRevenueActual = netRevenueActualIdx !== -1 ? parseLocaleNumber(row[netRevenueActualIdx]) : 0;
+      const netRevenuePlan = netRevenuePlanIdx !== -1 ? parseLocaleNumber(row[netRevenuePlanIdx]) : 0;
+      const netRevenueLastYear = netRevenueLastYearIdx !== -1 ? parseLocaleNumber(row[netRevenueLastYearIdx]) : 0;
+      
+      const expenseActual = expenseActualIdx !== -1 ? parseLocaleNumber(row[expenseActualIdx]) : 0;
+      const expensePlan = expensePlanIdx !== -1 ? parseLocaleNumber(row[expensePlanIdx]) : 0;
+      const expenseLastYear = expenseLastYearIdx !== -1 ? parseLocaleNumber(row[expenseLastYearIdx]) : 0;
+      
+      const pbtActual = pbtActualIdx !== -1 ? parseLocaleNumber(row[pbtActualIdx]) : 0;
+      const pbtPlan = pbtPlanIdx !== -1 ? parseLocaleNumber(row[pbtPlanIdx]) : 0;
+      const pbtLastYear = pbtLastYearIdx !== -1 ? parseLocaleNumber(row[pbtLastYearIdx]) : 0;
+      
+      const ebitdaActual = ebitdaActualIdx !== -1 ? parseLocaleNumber(row[ebitdaActualIdx]) : 0;
+      const ebitdaPlan = ebitdaPlanIdx !== -1 ? parseLocaleNumber(row[ebitdaPlanIdx]) : 0;
+      const ebitdaLastYear = ebitdaLastYearIdx !== -1 ? parseLocaleNumber(row[ebitdaLastYearIdx]) : 0;
+
       if (isNaN(year) || (!deptId && !nameValue)) continue;
       yearsSet.add(year);
 
@@ -381,15 +426,18 @@ export const dataService = {
         dept = dataByYear[year].find(d => d.name.toLowerCase() === deptId.toLowerCase());
       }
 
-      // If still not found and it's a product sync, create a new product
-      if (!dept && type === 'product') {
-        const newProdName = nameValue || deptId;
-        if (newProdName) {
-          const newProd: DepartmentData = {
-            id: `prod_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: newProdName,
-            type: 'product',
-            parentId: 'tmc',
+      // If still not found, create a new department/product from sync
+      if (!dept) {
+        const newName = nameValue || deptId;
+        if (newName) {
+          const isProduct = type === 'product' || deptId.startsWith('prod_');
+          const isCenter = type === 'profit' && (deptId.toLowerCase().includes('center') || deptId.toLowerCase().includes('trungtam'));
+          
+          const newDept: DepartmentData = {
+            id: deptId || `sync_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: newName,
+            type: isProduct ? 'product' : (isCenter ? 'center' : (type === 'profit' ? 'center' : 'phong')),
+            parentId: isProduct ? 'tmc' : 'all',
             monthly: initialMonths.map(m => ({
               month: m,
               actual: 0,
@@ -400,9 +448,9 @@ export const dataService = {
               profitLastYear: 0
             }))
           };
-          dataByYear[year].push(newProd);
-          dept = newProd;
-          console.log(`Created new product from sync: ${newProdName}`);
+          dataByYear[year].push(newDept);
+          dept = newDept;
+          console.log(`Created new ${newDept.type} from ${type} sync: ${newName}`);
         }
       }
 
@@ -424,7 +472,19 @@ export const dataService = {
               month: initialMonths[mIdx], 
               profitActual: profitActualIdx !== -1 ? profitActual : actual,
               profitPlan: profitPlanIdx !== -1 ? profitPlan : plan,
-              profitLastYear: profitLastYearIdx !== -1 ? profitLastYear : lastYear
+              profitLastYear: profitLastYearIdx !== -1 ? profitLastYear : lastYear,
+              netRevenueActual: netRevenueActualIdx !== -1 ? netRevenueActual : (actual && type === 'profit' ? actual : 0),
+              netRevenuePlan: netRevenuePlanIdx !== -1 ? netRevenuePlan : (plan && type === 'profit' ? plan : 0),
+              netRevenueLastYear: netRevenueLastYearIdx !== -1 ? netRevenueLastYear : (lastYear && type === 'profit' ? lastYear : 0),
+              expenseActual: expenseActualIdx !== -1 ? expenseActual : 0,
+              expensePlan: expensePlanIdx !== -1 ? expensePlan : 0,
+              expenseLastYear: expenseLastYearIdx !== -1 ? expenseLastYear : 0,
+              pbtActual: pbtActualIdx !== -1 ? pbtActual : 0,
+              pbtPlan: pbtPlanIdx !== -1 ? pbtPlan : 0,
+              pbtLastYear: pbtLastYearIdx !== -1 ? pbtLastYear : 0,
+              ebitdaActual: ebitdaActualIdx !== -1 ? ebitdaActual : 0,
+              ebitdaPlan: ebitdaPlanIdx !== -1 ? ebitdaPlan : 0,
+              ebitdaLastYear: ebitdaLastYearIdx !== -1 ? ebitdaLastYear : 0
             };
           }
         }
@@ -534,11 +594,42 @@ export const dataService = {
           plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
           lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
 
-          // Profit: Only from Centers (as per user request for profit structure)
-          const centers = children.filter((d: any) => d.type === 'center');
-          profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
-          profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
-          profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
+          // Profit: NO LONGER aggregated for 'all' (Company) - as per user request to be independent
+          // profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
+          // profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
+          // profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
+          
+          // For Company row, keep its own profit values entered by user
+          profitActual = parent.monthly[index].profitActual || 0;
+          profitPlan = parent.monthly[index].profitPlan || 0;
+          profitLastYear = parent.monthly[index].profitLastYear || 0;
+
+          // Aggregated detailed indicators for company (could be Sum or Independent)
+          // User said "Hợp nhất công ty ... gồm 4 chỉ tiêu ... được khai báo riêng"
+          // So we keep them independent like the main profit
+          const netRevenueActual = parent.monthly[index].netRevenueActual || 0;
+          const netRevenuePlan = parent.monthly[index].netRevenuePlan || 0;
+          const netRevenueLastYear = parent.monthly[index].netRevenueLastYear || 0;
+          
+          const expenseActual = parent.monthly[index].expenseActual || 0;
+          const expensePlan = parent.monthly[index].expensePlan || 0;
+          const expenseLastYear = parent.monthly[index].expenseLastYear || 0;
+          
+          const pbtActual = parent.monthly[index].pbtActual || 0;
+          const pbtPlan = parent.monthly[index].pbtPlan || 0;
+          const pbtLastYear = parent.monthly[index].pbtLastYear || 0;
+          
+          const ebitdaActual = parent.monthly[index].ebitdaActual || 0;
+          const ebitdaPlan = parent.monthly[index].ebitdaPlan || 0;
+          const ebitdaLastYear = parent.monthly[index].ebitdaLastYear || 0;
+
+          return { 
+            month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear, 
+            netRevenueActual, netRevenuePlan, netRevenueLastYear,
+            expenseActual, expensePlan, expenseLastYear,
+            pbtActual, pbtPlan, pbtLastYear,
+            ebitdaActual, ebitdaPlan, ebitdaLastYear
+          };
         } else {
           // Standard aggregation (e.g. Phongs to Centers)
           // As per user request: "doanh thu TMC bằng tổng các Phòng thuộc TMC cộng lại"
@@ -551,9 +642,10 @@ export const dataService = {
           
           // Keep existing profit data if it's a center
           if (parent.type === 'center') {
-            profitActual = parent.monthly[index].profitActual || 0;
-            profitPlan = parent.monthly[index].profitPlan || 0;
-            profitLastYear = parent.monthly[index].profitLastYear || 0;
+            return {
+              ...parent.monthly[index],
+              month, actual, plan, lastYear
+            };
           } else {
             profitActual = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
             profitPlan = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
@@ -573,6 +665,73 @@ export const dataService = {
     aggregate('all');
 
     return newData;
+  },
+
+  seedTestData: (year: number): DepartmentData[] => {
+    const data = generateInitialData(year);
+    // Fill phongs with some revenue
+    const phongs = data.filter(d => d.type === 'phong');
+    phongs.forEach(phong => {
+      phong.monthly.forEach((m, idx) => {
+        if (idx < 6) { // Half year of data
+          m.actual = 1000 + Math.random() * 2000;
+          m.plan = 2500;
+          m.lastYear = 2000;
+        }
+      });
+    });
+
+    // Fill bans with some revenue
+    const bans = data.filter(d => d.type === 'ban');
+    bans.forEach(ban => {
+      ban.monthly.forEach((m, idx) => {
+        if (idx < 6) {
+          m.actual = 2000 + Math.random() * 3000;
+          m.plan = 4000;
+          m.lastYear = 3500;
+        }
+      });
+    });
+
+    // Fill centers with independent profit
+    const centers = data.filter(d => d.type === 'center');
+    centers.forEach(center => {
+      center.monthly.forEach((m, idx) => {
+        if (idx < 6) {
+          m.netRevenueActual = 5000 + Math.random() * 2000;
+          m.netRevenuePlan = 6000;
+          m.expenseActual = 3000 + Math.random() * 1000;
+          m.expensePlan = 3500;
+          m.pbtActual = m.netRevenueActual - m.expenseActual;
+          m.pbtPlan = m.netRevenuePlan - m.expensePlan;
+          m.profitActual = m.pbtActual;
+          m.profitPlan = m.pbtPlan;
+          m.ebitdaActual = m.pbtActual + 500;
+          m.ebitdaPlan = m.pbtPlan + 500;
+        }
+      });
+    });
+
+    // Fill company independent profit
+    const company = data.find(d => d.type === 'company');
+    if (company) {
+      company.monthly.forEach((m, idx) => {
+        if (idx < 6) {
+          m.netRevenueActual = 20000 + Math.random() * 5000;
+          m.netRevenuePlan = 22000;
+          m.expenseActual = 12000 + Math.random() * 2000;
+          m.expensePlan = 13000;
+          m.pbtActual = m.netRevenueActual - m.expenseActual;
+          m.pbtPlan = m.netRevenuePlan - m.expensePlan;
+          m.profitActual = m.pbtActual;
+          m.profitPlan = m.pbtPlan;
+          m.ebitdaActual = m.pbtActual + 2000;
+          m.ebitdaPlan = m.pbtPlan + 2000;
+        }
+      });
+    }
+
+    return dataService.recalculateTotals(data);
   },
 
   saveData: (data: DepartmentData[], year: number) => {
@@ -603,18 +762,50 @@ export const dataService = {
           profitActual: acc.profitActual + (index < actualMonthsCount ? (curr.profitActual || 0) : 0),
           profitPlan: acc.profitPlan + (isPastOrCurrent ? (curr.profitPlan || 0) : 0),
           profitLastYear: acc.profitLastYear + (isPastOrCurrent ? (curr.profitLastYear || 0) : 0),
+          
+          netRevenueActual: acc.netRevenueActual + (index < actualMonthsCount ? (curr.netRevenueActual || 0) : 0),
+          netRevenuePlan: acc.netRevenuePlan + (isPastOrCurrent ? (curr.netRevenuePlan || 0) : 0),
+          netRevenueLastYear: acc.netRevenueLastYear + (isPastOrCurrent ? (curr.netRevenueLastYear || 0) : 0),
+          
+          expenseActual: acc.expenseActual + (index < actualMonthsCount ? (curr.expenseActual || 0) : 0),
+          expensePlan: acc.expensePlan + (isPastOrCurrent ? (curr.expensePlan || 0) : 0),
+          expenseLastYear: acc.expenseLastYear + (isPastOrCurrent ? (curr.expenseLastYear || 0) : 0),
+          
+          pbtActual: acc.pbtActual + (index < actualMonthsCount ? (curr.pbtActual || 0) : 0),
+          pbtPlan: acc.pbtPlan + (isPastOrCurrent ? (curr.pbtPlan || 0) : 0),
+          pbtLastYear: acc.pbtLastYear + (isPastOrCurrent ? (curr.pbtLastYear || 0) : 0),
+          
+          ebitdaActual: acc.ebitdaActual + (index < actualMonthsCount ? (curr.ebitdaActual || 0) : 0),
+          ebitdaPlan: acc.ebitdaPlan + (isPastOrCurrent ? (curr.ebitdaPlan || 0) : 0),
+          ebitdaLastYear: acc.ebitdaLastYear + (isPastOrCurrent ? (curr.ebitdaLastYear || 0) : 0),
         };
       },
-      { actual: 0, plan: 0, lastYear: 0, profitActual: 0, profitPlan: 0, profitLastYear: 0 }
+      { 
+        actual: 0, plan: 0, lastYear: 0, 
+        profitActual: 0, profitPlan: 0, profitLastYear: 0,
+        netRevenueActual: 0, netRevenuePlan: 0, netRevenueLastYear: 0,
+        expenseActual: 0, expensePlan: 0, expenseLastYear: 0,
+        pbtActual: 0, pbtPlan: 0, pbtLastYear: 0,
+        ebitdaActual: 0, ebitdaPlan: 0, ebitdaLastYear: 0
+      }
     );
     
     const annualPlan = monthly.reduce((sum, m) => sum + m.plan, 0);
     const annualProfitPlan = monthly.reduce((sum, m) => sum + (m.profitPlan || 0), 0);
     
+    const annualNetRevenuePlan = monthly.reduce((sum, m) => sum + (m.netRevenuePlan || 0), 0);
+    const annualExpensePlan = monthly.reduce((sum, m) => sum + (m.expensePlan || 0), 0);
+    const annualPbtPlan = monthly.reduce((sum, m) => sum + (m.pbtPlan || 0), 0);
+    const annualEbitdaPlan = monthly.reduce((sum, m) => sum + (m.ebitdaPlan || 0), 0);
+    
     return {
       ...cumulative,
       annualPlan,
-      annualProfitPlan
+      annualProfitPlan,
+      annualNetRevenuePlan,
+      annualExpensePlan,
+      annualPbtPlan,
+      annualEbitdaPlan
     };
   },
 };
