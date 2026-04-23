@@ -1057,12 +1057,18 @@ export default function App() {
       profitDepts.forEach(dept => {
         let displayId = dept.id;
         if (dept.id.startsWith('dept_') || dept.id.startsWith('prod_')) {
+          const nameSlug = slugify(dept.name);
           if (dept.type === 'company' || dept.type === 'center' || dept.type === 'ban') {
-            displayId = slugify(dept.name);
+            displayId = nameSlug;
           } else if (dept.type === 'phong') {
             const parent = allDepts.find(p => p.id === dept.parentId);
             const parentIdSlug = parent ? (parent.id.startsWith('dept_') ? slugify(parent.name) : parent.id) : 'all';
-            displayId = `${parentIdSlug}_${slugify(dept.name)}`;
+            
+            if (nameSlug.startsWith(parentIdSlug + '_')) {
+              displayId = nameSlug;
+            } else {
+              displayId = `${parentIdSlug}_${nameSlug}`;
+            }
           }
         }
 
@@ -1139,15 +1145,23 @@ export default function App() {
       exportList.forEach(dept => {
         let displayId = dept.id;
         if (dept.id.startsWith('dept_') || dept.id.startsWith('prod_')) {
+          const nameSlug = slugify(dept.name);
           if (dept.type === 'ban' || dept.type === 'center' || dept.type === 'company') {
-            displayId = slugify(dept.name);
+            displayId = nameSlug;
           } else if (dept.type === 'phong') {
-             // For phongs, we find parent center id
              const parentCenter = allDepts.find(c => c.id === dept.parentId);
              const parentIdSlug = parentCenter ? (parentCenter.id.startsWith('dept_') ? slugify(parentCenter.name) : parentCenter.id) : 'all';
-             displayId = `${parentIdSlug}_${slugify(dept.name)}`;
+             
+             // Prevent double prefixing if name already contains parent slug
+             if (nameSlug.startsWith(parentIdSlug + '_')) {
+               displayId = nameSlug;
+             } else if (nameSlug === parentIdSlug) {
+               displayId = nameSlug;
+             } else {
+               displayId = `${parentIdSlug}_${nameSlug}`;
+             }
           } else if (dept.type === 'product') {
-            displayId = `prod_${slugify(dept.name)}`;
+            displayId = `prod_${nameSlug}`;
           }
         }
         

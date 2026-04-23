@@ -205,7 +205,15 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
             } else if (d.type === 'phong') {
               const parent = localData.find(p => p.id === d.parentId);
               const parentIdRaw = parent ? (parent.id.startsWith('dept_') ? slugify(parent.name) : parent.id) : 'all';
-              updatedId = `${parentIdRaw}_${nameSlug}`;
+              
+              // Prevent double prefixing
+              if (nameSlug.startsWith(parentIdRaw + '_')) {
+                updatedId = nameSlug;
+              } else if (nameSlug === parentIdRaw) {
+                updatedId = nameSlug;
+              } else {
+                updatedId = `${parentIdRaw}_${nameSlug}`;
+              }
             } else if (d.type === 'product') {
               updatedId = `prod_${nameSlug}`;
             }

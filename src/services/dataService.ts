@@ -1,4 +1,5 @@
 import { DepartmentData, MonthlyData } from '../types';
+import { slugify } from '../utils';
 
 const STORAGE_PREFIX = 'corporate_dashboard_data_';
 
@@ -417,13 +418,23 @@ export const dataService = {
         updatedDeptIdsByYear[year] = new Set<string>();
       }
 
-      // Try matching by ID first, then by Name
-      let dept = dataByYear[year].find(d => d.id.toLowerCase() === deptId.toLowerCase());
+      // Try matching by ID first, then by Name, then by slugified Name
+      const deptIdLower = deptId.toLowerCase();
+      const nameValueLower = nameValue.toLowerCase();
+      const nameSlugValue = slugify(nameValue);
+
+      let dept = dataByYear[year].find(d => 
+        d.id.toLowerCase() === deptIdLower || 
+        d.id.toLowerCase() === nameSlugValue ||
+        d.id.toLowerCase() === `prod_${nameSlugValue}`
+      );
+      
       if (!dept && nameValue) {
-        dept = dataByYear[year].find(d => d.name.toLowerCase() === nameValue.toLowerCase());
+        dept = dataByYear[year].find(d => d.name.toLowerCase() === nameValueLower);
       }
+      
       if (!dept && deptId) {
-        dept = dataByYear[year].find(d => d.name.toLowerCase() === deptId.toLowerCase());
+        dept = dataByYear[year].find(d => d.name.toLowerCase() === deptIdLower);
       }
 
       // If still not found, create a new department/product from sync
