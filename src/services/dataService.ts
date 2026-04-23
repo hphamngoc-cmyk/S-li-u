@@ -584,76 +584,42 @@ export const dataService = {
       if (!parent) return;
 
       parent.monthly = months.map((month, index) => {
-        let actual = 0, plan = 0, lastYear = 0;
-        let profitActual = 0, profitPlan = 0, profitLastYear = 0;
-
-        if (parentId === 'all') {
+        if (parent.id === 'all') {
           // Revenue: Sum ONLY from Bans (as per user request: "Doanh thu công ty bằng tổng các ban trực thuộc, không cộng trung tâm")
           const bans = children.filter((d: any) => d.type === 'ban');
-          actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
-          plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
-          lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
-
-          // Profit: NO LONGER aggregated for 'all' (Company) - as per user request to be independent
-          // profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
-          // profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
-          // profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
-          
-          // For Company row, keep its own profit values entered by user
-          profitActual = parent.monthly[index].profitActual || 0;
-          profitPlan = parent.monthly[index].profitPlan || 0;
-          profitLastYear = parent.monthly[index].profitLastYear || 0;
-
-          // Aggregated detailed indicators for company (could be Sum or Independent)
-          // User said "Hợp nhất công ty ... gồm 4 chỉ tiêu ... được khai báo riêng"
-          // So we keep them independent like the main profit
-          const netRevenueActual = parent.monthly[index].netRevenueActual || 0;
-          const netRevenuePlan = parent.monthly[index].netRevenuePlan || 0;
-          const netRevenueLastYear = parent.monthly[index].netRevenueLastYear || 0;
-          
-          const expenseActual = parent.monthly[index].expenseActual || 0;
-          const expensePlan = parent.monthly[index].expensePlan || 0;
-          const expenseLastYear = parent.monthly[index].expenseLastYear || 0;
-          
-          const pbtActual = parent.monthly[index].pbtActual || 0;
-          const pbtPlan = parent.monthly[index].pbtPlan || 0;
-          const pbtLastYear = parent.monthly[index].pbtLastYear || 0;
-          
-          const ebitdaActual = parent.monthly[index].ebitdaActual || 0;
-          const ebitdaPlan = parent.monthly[index].ebitdaPlan || 0;
-          const ebitdaLastYear = parent.monthly[index].ebitdaLastYear || 0;
+          const actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+          const plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+          const lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
 
           return { 
-            month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear, 
-            netRevenueActual, netRevenuePlan, netRevenueLastYear,
-            expenseActual, expensePlan, expenseLastYear,
-            pbtActual, pbtPlan, pbtLastYear,
-            ebitdaActual, ebitdaPlan, ebitdaLastYear
+            ...parent.monthly[index],
+            month, actual, plan, lastYear 
+          };
+        } else if (parent.type === 'center') {
+          // Aggregate Phongs to Centers for Revenue
+          const phongs = children.filter((c: any) => c.type === 'phong');
+          const actual = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+          const plan = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+          const lastYear = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
+
+          return {
+            ...parent.monthly[index],
+            month, actual, plan, lastYear
           };
         } else {
-          // Standard aggregation (e.g. Phongs to Centers)
-          // As per user request: "doanh thu TMC bằng tổng các Phòng thuộc TMC cộng lại"
-          // We ignore products here as they are handled independently in the Product tab
-          const phongs = children.filter((c: any) => c.type === 'phong');
+          // Group (e.g. Products to TMC if grouped)
+          const actual = children.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
+          const plan = children.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
+          const lastYear = children.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
+          const profitActual = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
+          const profitPlan = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
+          const profitLastYear = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
 
-          actual = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
-          plan = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
-          lastYear = phongs.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
-          
-          // Keep existing profit data if it's a center
-          if (parent.type === 'center') {
-            return {
-              ...parent.monthly[index],
-              month, actual, plan, lastYear
-            };
-          } else {
-            profitActual = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
-            profitPlan = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
-            profitLastYear = children.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
-          }
+          return {
+            ...parent.monthly[index],
+            month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear
+          };
         }
-
-        return { month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear };
       });
     };
 

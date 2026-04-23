@@ -18,9 +18,9 @@ interface DataEntryProps {
 const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const PROFIT_INDICATORS = [
-  { id: 'netRevenue', name: 'Doanh thu thuần' },
+  { id: 'netRevenue', name: 'Doanh thu' },
   { id: 'expense', name: 'Chi phí' },
-  { id: 'pbt', name: 'Lợi nhuận trước thuế' },
+  { id: 'pbt', name: 'Lợi nhuận' },
   { id: 'ebitda', name: 'EBITDA' }
 ];
 
@@ -78,24 +78,21 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
     const company = newData.find((d: any) => d.id === 'all');
     if (company) {
       const children = newData.filter((d: any) => d.parentId === 'all');
-      company.monthly = months.map((month: string, index: number) => {
+      company.monthly = months.map((month, index) => {
         // Revenue: Sum ONLY from Bans (as per user request: "Doanh thu công ty bằng tổng các ban trực thuộc, không cộng trung tâm")
         const bans = children.filter((d: any) => d.type === 'ban');
         const actual = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].actual || 0), 0);
         const plan = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].plan || 0), 0);
         const lastYear = bans.reduce((sum: number, c: any) => sum + (c.monthly[index].lastYear || 0), 0);
 
-        // Profit: NO LONGER aggregated for Company - as per user request to be independent
-        // profitActual = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitActual || 0), 0);
-        // profitPlan = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitPlan || 0), 0);
-        // profitLastYear = centers.reduce((sum: number, c: any) => sum + (c.monthly[index].profitLastYear || 0), 0);
-        
-        // Keep Company's own profit values entered by user
-        const profitActual = company.monthly[index].profitActual || 0;
-        const profitPlan = company.monthly[index].profitPlan || 0;
-        const profitLastYear = company.monthly[index].profitLastYear || 0;
-        
-        return { month, actual, plan, lastYear, profitActual, profitPlan, profitLastYear };
+        // Keep Company's own values for everything else
+        return { 
+          ...company.monthly[index],
+          month, 
+          actual, 
+          plan, 
+          lastYear 
+        };
       });
     }
 
@@ -123,20 +120,30 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
       return result;
     }
 
-    // For revenue, show everything
+    // For revenue, show everything in requested order
     if (company) result.push(company);
 
-    const centers = localData.filter(d => d.type === 'center');
-    centers.forEach(center => {
-      result.push(center);
-      const phongs = localData.filter(d => d.parentId === center.id);
-      result.push(...phongs);
-    });
-
+    // 1. Bans directly under company
     const bans = localData.filter(d => d.type === 'ban');
     result.push(...bans);
 
-    // Add any others that might have been added manually
+    // 2. Centers
+    const centers = localData.filter(d => d.type === 'center');
+    centers.forEach(center => {
+      result.push(center);
+      
+      // 3. Phongs belonging to center
+      const phongs = localData.filter(d => d.parentId === center.id && d.type === 'phong');
+      result.push(...phongs);
+
+      // 4. TMC Products (if this is TMC)
+      if (center.id === 'tmc') {
+        const tmcProducts = localData.filter(d => d.type === 'product' && d.parentId === 'tmc');
+        result.push(...tmcProducts);
+      }
+    });
+
+    // Add any others (not expected but for safety)
     localData.forEach(d => {
       if (!result.find(r => r.id === d.id)) {
         result.push(d);
@@ -222,20 +229,37 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
   };
 
   const downloadTemplate = () => {
-    const templateData = months.map(m => ({
-      'Tháng': m,
-      'Doanh thu Thực tế': 0,
-      'Doanh thu Kế hoạch': 0,
-      'Doanh thu Cùng kỳ': 0,
-      'Lợi nhuận Thực tế': 0,
-      'Lợi nhuận Kế hoạch': 0,
-      'Lợi nhuận Cùng kỳ': 0
-    }));
+    let templateData: any[] = [];
+    
+    if (entryTab === 'profit') {
+      templateData = months.map(m => ({
+        'Tháng': m,
+        'Doanh thu Thực tế': 0,
+        'Doanh thu Kế hoạch': 0,
+        'Doanh thu Cùng kỳ': 0,
+        'Chi phí Thực tế': 0,
+        'Chi phí Kế hoạch': 0,
+        'Chi phí Cùng kỳ': 0,
+        'Lợi nhuận Thực tế': 0,
+        'Lợi nhuận Kế hoạch': 0,
+        'Lợi nhuận Cùng kỳ': 0,
+        'EBITDA Thực tế': 0,
+        'EBITDA Kế hoạch': 0,
+        'EBITDA Cùng kỳ': 0
+      }));
+    } else {
+      templateData = months.map(m => ({
+        'Tháng': m,
+        'Doanh thu Thực tế': 0,
+        'Doanh thu Kế hoạch': 0,
+        'Doanh thu Cùng kỳ': 0
+      }));
+    }
 
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, `Template_Khai_Bao_${localData[activeDeptIndex].name}.xlsx`);
+    XLSX.writeFile(wb, `Template_Khai_Bao_${entryTab.toUpperCase()}_${localData[activeDeptIndex].name}.xlsx`);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -257,19 +281,35 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
         const monthName = row['Tháng'];
         const mIdx = months.indexOf(monthName);
         if (mIdx !== -1) {
-          if (entryTab === 'revenue') {
+          if (entryTab === 'revenue' || entryTab === 'product') {
             currentMonthly[mIdx] = {
               ...currentMonthly[mIdx],
-              actual: parseInt(row['Doanh thu Thực tế'] || row['Thực tế (Năm nay)']) || 0,
-              plan: parseInt(row['Doanh thu Kế hoạch'] || row['Kế hoạch (Năm nay)']) || 0,
-              lastYear: parseInt(row['Doanh thu Cùng kỳ'] || row['Thực tế (Năm trước)']) || 0
+              actual: parseInt(row['Doanh thu Thực tế'] || row['Thực tế'] || 0) || 0,
+              plan: parseInt(row['Doanh thu Kế hoạch'] || row['Kế hoạch'] || 0) || 0,
+              lastYear: parseInt(row['Doanh thu Cùng kỳ'] || row['Cùng kỳ'] || 0) || 0
             };
-          } else {
+          } else if (entryTab === 'profit') {
             currentMonthly[mIdx] = {
               ...currentMonthly[mIdx],
-              profitActual: parseInt(row['Lợi nhuận Thực tế']) || 0,
-              profitPlan: parseInt(row['Lợi nhuận Kế hoạch']) || 0,
-              profitLastYear: parseInt(row['Lợi nhuận Cùng kỳ']) || 0
+              // Revenue
+              netRevenueActual: parseInt(row['Doanh thu Thực tế'] || 0) || 0,
+              netRevenuePlan: parseInt(row['Doanh thu Kế hoạch'] || 0) || 0,
+              netRevenueLastYear: parseInt(row['Doanh thu Cùng kỳ'] || 0) || 0,
+              // Expense
+              expenseActual: parseInt(row['Chi phí Thực tế'] || 0) || 0,
+              expensePlan: parseInt(row['Chi phí Kế hoạch'] || 0) || 0,
+              expenseLastYear: parseInt(row['Chi phí Cùng kỳ'] || 0) || 0,
+              // Profit (PBT)
+              pbtActual: parseInt(row['Lợi nhuận Thực tế'] || 0) || 0,
+              pbtPlan: parseInt(row['Lợi nhuận Kế hoạch'] || 0) || 0,
+              pbtLastYear: parseInt(row['Lợi nhuận Cùng kỳ'] || 0) || 0,
+              profitActual: parseInt(row['Lợi nhuận Thực tế'] || 0) || 0, // Sync for legacy
+              profitPlan: parseInt(row['Lợi nhuận Kế hoạch'] || 0) || 0, // Sync for legacy
+              profitLastYear: parseInt(row['Lợi nhuận Cùng kỳ'] || 0) || 0, // Sync for legacy
+              // EBITDA
+              ebitdaActual: parseInt(row['EBITDA Thực tế'] || 0) || 0,
+              ebitdaPlan: parseInt(row['EBITDA Kế hoạch'] || 0) || 0,
+              ebitdaLastYear: parseInt(row['EBITDA Cùng kỳ'] || 0) || 0
             };
           }
         }
