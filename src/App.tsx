@@ -647,10 +647,9 @@ export default function App() {
       if (isProfit) {
         return {
           name: m,
-          'Doanh thu': monthData.netRevenueActual || 0,
-          'Chi phí': monthData.expenseActual || 0,
-          'Lợi nhuận': monthData.pbtActual || monthData.profitActual || 0,
-          'EBITDA': monthData.ebitdaActual || 0
+          actual: monthData.ebitdaActual || 0,
+          plan: monthData.ebitdaPlan || 0,
+          lastYear: monthData.ebitdaLastYear || 0
         };
       }
       return {
@@ -665,10 +664,15 @@ export default function App() {
       <div className="mt-4 space-y-4">
         <button 
           onClick={() => toggleChart(dept.id)}
-          className="flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-800 transition-colors uppercase tracking-widest"
+          className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all border outline-none",
+            isVisible 
+              ? "bg-zinc-900 border-zinc-900 text-white shadow-lg" 
+              : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-900 hover:text-zinc-900 shadow-sm"
+          )}
         >
           {isVisible ? <Minus size={14} /> : <Plus size={14} />}
-          {isVisible ? 'Ẩn biểu đồ' : 'Xem biểu đồ'} {title}
+          {isVisible ? 'Đóng biểu đồ' : 'Xem biểu đồ chi tiết'}
         </button>
 
         <AnimatePresence>
@@ -720,7 +724,7 @@ export default function App() {
                 {/* Line Chart */}
                 <div className={cn("bg-white p-6 rounded-3xl border border-zinc-200 shadow-sm", isProfit && "w-full")}>
                   <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-6">
-                    {isProfit ? 'Diễn biến các chỉ tiêu lợi nhuận' : 'Diễn biến doanh thu qua các tháng'}
+                    {isProfit ? 'Diễn biến chỉ tiêu EBITDA (Thực tế vs KH vs CK)' : 'Diễn biến doanh thu qua các tháng'}
                   </h3>
                   <div className="h-[400px]">
                     <ResponsiveContainer width="100%" height="100%">
@@ -730,20 +734,9 @@ export default function App() {
                         <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#999' }} tickFormatter={(val) => formatNumber(val)} />
                         <Tooltip formatter={(val: number) => formatNumber(val)} />
                         <Legend verticalAlign="top" align="right" iconType="circle" />
-                        {isProfit ? (
-                          <>
-                            <Line type="monotone" dataKey="Doanh thu" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} />
-                            <Line type="monotone" dataKey="Chi phí" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} />
-                            <Line type="monotone" dataKey="Lợi nhuận" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
-                            <Line type="monotone" dataKey="EBITDA" stroke="#8b5cf6" strokeWidth={2} dot={{ r: 4 }} />
-                          </>
-                        ) : (
-                          <>
-                            <Line type="monotone" dataKey="actual" name="Thực tế" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
-                            <Line type="monotone" dataKey="plan" name="Kế hoạch" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#94a3b8' }} />
-                            <Line type="monotone" dataKey="lastYear" name="Cùng kỳ" stroke="#cbd5e1" strokeWidth={2} dot={{ r: 3, fill: '#cbd5e1' }} />
-                          </>
-                        )}
+                        <Line type="monotone" dataKey="actual" name="Thực tế" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6 }} />
+                        <Line type="monotone" dataKey="plan" name="Kế hoạch" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={{ r: 3, fill: '#94a3b8' }} />
+                        <Line type="monotone" dataKey="lastYear" name="Cùng kỳ" stroke="#cbd5e1" strokeWidth={2} dot={{ r: 3, fill: '#cbd5e1' }} />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -1625,11 +1618,13 @@ export default function App() {
                   </div>
                   
                   {dashboardTab !== 'product' && (
-                    <DepartmentCharts 
-                      dept={sortedOverview.company} 
-                      subDepts={sortedOverview.bansSection.filter((d: any) => d.type === 'ban')} 
-                      title="Khối Ban"
-                    />
+                    <div id="company-charts">
+                      <DepartmentCharts 
+                        dept={sortedOverview.company} 
+                        subDepts={sortedOverview.bansSection.filter((d: any) => d.type === 'ban')} 
+                        title="Khối Ban"
+                      />
+                    </div>
                   )}
                 </div>
             )}
@@ -1715,7 +1710,8 @@ export default function App() {
                         className="grid grid-cols-1 gap-4"
                       >
                         {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (
-                          <div id={`center-table-${center.id}`} key={center.id} className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                          <div key={center.id} className="space-y-4 mb-4">
+                            <div id={`center-table-${center.id}`} className="bg-white rounded-3xl border border-zinc-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
                         <table className="w-full text-left border-separate border-spacing-0 table-fixed">
                         <colgroup>
                           <col className="w-[25%]" />
@@ -1762,18 +1758,19 @@ export default function App() {
                           </AnimatePresence>
                         </tbody>
                       </table>
+                            </div>
 
-                      {dashboardTab !== 'product' && (
-                        <div className="px-6 pb-6">
-                          <DepartmentCharts 
-                            dept={center} 
-                            subDepts={center.phongs} 
-                            title={`Bộ phận ${center.name}`}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                            {dashboardTab !== 'product' && (
+                              <div id={`center-charts-${center.id}`} className="pl-4">
+                                <DepartmentCharts 
+                                  dept={center} 
+                                  subDepts={center.phongs} 
+                                  title={`Bộ phận thuộc ${center.name}`}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2320,27 +2317,51 @@ export default function App() {
               <div className="p-6 space-y-6">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {dashboardTab === 'revenue' && (
-                    <button 
-                      onClick={() => {
-                        setSelectedExportIds(prev => 
-                          prev.includes('section-bans') 
-                            ? prev.filter(id => id !== 'section-bans')
-                            : [...prev, 'section-bans']
-                        );
-                      }}
-                      className={cn(
-                        "p-4 rounded-2xl border-2 text-left transition-all group",
-                        selectedExportIds.includes('section-bans')
-                          ? "border-zinc-900 bg-zinc-900 text-white"
-                          : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
-                      )}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <TableIcon size={20} className={selectedExportIds.includes('section-bans') ? "text-white/60" : "text-zinc-400"} />
-                        {selectedExportIds.includes('section-bans') && <Check size={16} />}
-                      </div>
-                      <span className="text-sm font-bold">Bảng Khối Ban</span>
-                    </button>
+                    <React.Fragment key="section-bans">
+                      <button 
+                        onClick={() => {
+                          setSelectedExportIds(prev => 
+                            prev.includes('section-bans') 
+                              ? prev.filter(id => id !== 'section-bans')
+                              : [...prev, 'section-bans']
+                          );
+                        }}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 text-left transition-all group",
+                          selectedExportIds.includes('section-bans')
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <TableIcon size={20} className={selectedExportIds.includes('section-bans') ? "text-white/60" : "text-zinc-400"} />
+                          {selectedExportIds.includes('section-bans') && <Check size={16} />}
+                        </div>
+                        <span className="text-sm font-bold">Bảng Khối Ban</span>
+                      </button>
+
+                      <button 
+                        onClick={() => {
+                          setSelectedExportIds(prev => 
+                            prev.includes('company-charts') 
+                              ? prev.filter(id => id !== 'company-charts')
+                              : [...prev, 'company-charts']
+                          );
+                        }}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 text-left transition-all group",
+                          selectedExportIds.includes('company-charts')
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <ImageIcon size={20} className={selectedExportIds.includes('company-charts') ? "text-white/60" : "text-zinc-400"} />
+                          {selectedExportIds.includes('company-charts') && <Check size={16} />}
+                        </div>
+                        <span className="text-sm font-bold">Biểu đồ Khối Ban</span>
+                      </button>
+                    </React.Fragment>
                   )}
                   
                   <button 
@@ -2366,29 +2387,55 @@ export default function App() {
                   </button>
 
                   {sortedOverview.centersSection.filter((d: any) => d.type === 'center').map((center: any) => (
-                    <button 
-                      key={center.id}
-                      onClick={() => {
-                        const id = `center-table-${center.id}`;
-                        setSelectedExportIds(prev => 
-                          prev.includes(id) 
-                            ? prev.filter(i => i !== id)
-                            : [...prev, id]
-                        );
-                      }}
-                      className={cn(
-                        "p-4 rounded-2xl border-2 text-left transition-all group",
-                        selectedExportIds.includes(`center-table-${center.id}`)
-                          ? "border-zinc-900 bg-zinc-900 text-white"
-                          : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                    <React.Fragment key={center.id}>
+                      <button 
+                        onClick={() => {
+                          const id = `center-table-${center.id}`;
+                          setSelectedExportIds(prev => 
+                            prev.includes(id) 
+                              ? prev.filter(i => i !== id)
+                              : [...prev, id]
+                          );
+                        }}
+                        className={cn(
+                          "p-4 rounded-2xl border-2 text-left transition-all group",
+                          selectedExportIds.includes(`center-table-${center.id}`)
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                        )}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <TableIcon size={20} className={selectedExportIds.includes(`center-table-${center.id}`) ? "text-white/60" : "text-zinc-400"} />
+                          {selectedExportIds.includes(`center-table-${center.id}`) && <Check size={16} />}
+                        </div>
+                        <span className="text-sm font-bold">Bảng {center.name}</span>
+                      </button>
+
+                      {dashboardTab !== 'product' && (
+                        <button 
+                          onClick={() => {
+                            const id = `center-charts-${center.id}`;
+                            setSelectedExportIds(prev => 
+                              prev.includes(id) 
+                                ? prev.filter(i => i !== id)
+                                : [...prev, id]
+                            );
+                          }}
+                          className={cn(
+                            "p-4 rounded-2xl border-2 text-left transition-all group",
+                            selectedExportIds.includes(`center-charts-${center.id}`)
+                              ? "border-zinc-900 bg-zinc-900 text-white"
+                              : "border-zinc-100 bg-zinc-50 text-zinc-600 hover:border-zinc-300"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <ImageIcon size={20} className={selectedExportIds.includes(`center-charts-${center.id}`) ? "text-white/60" : "text-zinc-400"} />
+                            {selectedExportIds.includes(`center-charts-${center.id}`) && <Check size={16} />}
+                          </div>
+                          <span className="text-sm font-bold">Biểu đồ {center.name}</span>
+                        </button>
                       )}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <TableIcon size={20} className={selectedExportIds.includes(`center-table-${center.id}`) ? "text-white/60" : "text-zinc-400"} />
-                        {selectedExportIds.includes(`center-table-${center.id}`) && <Check size={16} />}
-                      </div>
-                      <span className="text-sm font-bold">Bảng {center.name}</span>
-                    </button>
+                    </React.Fragment>
                   ))}
                 </div>
 
