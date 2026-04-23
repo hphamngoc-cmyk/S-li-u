@@ -8,7 +8,7 @@ import { dataService, GoogleSheetConfig } from './services/dataService';
 import { DataEntry } from './components/DataEntry';
 import { MiniProgress } from './components/MiniProgress';
 import { DepartmentData } from './types';
-import { cn, formatNumber, formatPercent, getPerformanceBadgeColor, calculatePerformance, getPerformanceTextColor } from './utils';
+import { cn, formatNumber, formatPercent, getPerformanceBadgeColor, calculatePerformance, getPerformanceTextColor, slugify } from './utils';
 
 export default function App() {
   const [allDepts, setAllDepts] = useState<DepartmentData[]>([]);
@@ -1047,13 +1047,29 @@ export default function App() {
         'AnnualNetRevenuePlan', 'AnnualExpensePlan', 'AnnualPBTPlan', 'AnnualEBITDAPlan',
         'Name'
       ];
-      // For profit, include Company and Centers
-      const profitDepts = allDepts.filter(d => d.type === 'company' || d.type === 'center');
+      // For profit, include Company and Centers - sorted
+      const profitDepts: DepartmentData[] = [];
+      const company = allDepts.find(d => d.type === 'company');
+      if (company) profitDepts.push(company);
+      const centers = allDepts.filter(d => d.type === 'center');
+      profitDepts.push(...centers);
+
       profitDepts.forEach(dept => {
+        let displayId = dept.id;
+        if (dept.id.startsWith('dept_') || dept.id.startsWith('prod_')) {
+          if (dept.type === 'company' || dept.type === 'center' || dept.type === 'ban') {
+            displayId = slugify(dept.name);
+          } else if (dept.type === 'phong') {
+            const parent = allDepts.find(p => p.id === dept.parentId);
+            const parentIdSlug = parent ? (parent.id.startsWith('dept_') ? slugify(parent.name) : parent.id) : 'all';
+            displayId = `${parentIdSlug}_${slugify(dept.name)}`;
+          }
+        }
+
         monthsShort.forEach(m => {
           const row: any = {
             'Year': selectedYear,
-            'DeptID': dept.id,
+            'DeptID': displayId,
             'Month': m,
             'Name': dept.name
           };
@@ -1069,10 +1085,14 @@ export default function App() {
       // For product, include only products
       const productDepts = allDepts.filter(d => d.type === 'product');
       productDepts.forEach(dept => {
+        let displayId = dept.id;
+        if (dept.id.startsWith('dept_') || dept.id.startsWith('prod_')) {
+          displayId = `prod_${slugify(dept.name)}`;
+        }
         monthsShort.forEach(m => {
           data.push({
             'Year': selectedYear,
-            'DeptID': dept.id,
+            'DeptID': displayId,
             'Month': m,
             'Actual': 0,
             'Plan': 0,
@@ -1083,21 +1103,65 @@ export default function App() {
       });
     } else {
       headers = ['Year', 'DeptID', 'Month', 'Actual', 'Plan', 'LastYear', 'Name'];
-      // For revenue, include Bans and Phongs
-      allDepts.forEach(dept => {
-        if (dept.type === 'phong' || dept.type === 'ban') {
-          monthsShort.forEach(m => {
-            data.push({
-              'Year': selectedYear,
-              'DeptID': dept.id,
-              'Month': m,
-              'Actual': 0,
-              'Plan': 0,
-              'LastYear': 0,
-              'Name': dept.name
-            });
-          });
+      
+      // Follow the same hierarchy as DataEntry.tsx for revenue sorting
+      const exportList: DepartmentData[] = [];
+      const company = allDepts.find(d => d.type === 'company');
+      if (company) exportList.push(company);
+      
+      // 1. Bans directly under company
+      const bans = allDepts.filter(d => d.type === 'ban');
+      exportList.push(...bans);
+
+      // 2. Centers
+      const centers = allDepts.filter(d => d.type === 'center');
+      centers.forEach(center => {
+        exportList.push(center);
+        
+        // 3. Phongs belonging to center
+        const phongs = allDepts.filter(d => d.parentId === center.id && d.type === 'phong');
+        
+        // Add prefix for phongs to identify their center in the Name column
+        const phongsWithPrefix = phongs.map(p => ({
+          ...p,
+          name: `${center.name} - ${p.name}`
+        }));
+        
+        exportList.push(...phongsWithPrefix);
+
+        // 4. Products if TMC
+        if (center.id === 'tmc') {
+          const tmcProds = allDepts.filter(d => d.type === 'product' && d.parentId === 'tmc');
+          exportList.push(...tmcProds);
         }
+      });
+
+      exportList.forEach(dept => {
+        let displayId = dept.id;
+        if (dept.id.startsWith('dept_') || dept.id.startsWith('prod_')) {
+          if (dept.type === 'ban' || dept.type === 'center' || dept.type === 'company') {
+            displayId = slugify(dept.name);
+          } else if (dept.type === 'phong') {
+             // For phongs, we find parent center id
+             const parentCenter = allDepts.find(c => c.id === dept.parentId);
+             const parentIdSlug = parentCenter ? (parentCenter.id.startsWith('dept_') ? slugify(parentCenter.name) : parentCenter.id) : 'all';
+             displayId = `${parentIdSlug}_${slugify(dept.name)}`;
+          } else if (dept.type === 'product') {
+            displayId = `prod_${slugify(dept.name)}`;
+          }
+        }
+        
+        monthsShort.forEach(m => {
+          data.push({
+            'Year': selectedYear,
+            'DeptID': displayId,
+            'Month': m,
+            'Actual': 0,
+            'Plan': 0,
+            'LastYear': 0,
+            'Name': dept.name
+          });
+        });
       });
     }
 

@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { X, Plus, Trash2, Save, AlertCircle, Download, Upload, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { DepartmentData, MonthlyData } from '../types';
-import { cn, formatNumber } from '../utils';
+import { cn, formatNumber, slugify } from '../utils';
 
 import { dataService, GoogleSheetConfig } from '../services/dataService';
 
@@ -192,7 +192,37 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
   };
 
   const handleDeptNameChange = (id: string, name: string) => {
-    const newData = localData.map(d => d.id === id ? { ...d, name } : d);
+    const newData = localData.map(d => {
+      if (d.id === id) {
+        let updatedId = d.id;
+        
+        // Rules for suggesting ID
+        if ((d.id.startsWith('dept_') || d.id.startsWith('prod_')) && name && name !== 'Bộ phận mới' && name !== 'Sản phẩm mới') {
+          const nameSlug = slugify(name);
+          if (nameSlug) {
+            if (d.type === 'ban') {
+              updatedId = nameSlug;
+            } else if (d.type === 'phong') {
+              const parent = localData.find(p => p.id === d.parentId);
+              const parentIdRaw = parent ? (parent.id.startsWith('dept_') ? slugify(parent.name) : parent.id) : 'all';
+              updatedId = `${parentIdRaw}_${nameSlug}`;
+            } else if (d.type === 'product') {
+              updatedId = `prod_${nameSlug}`;
+            }
+          }
+        }
+        return { ...d, id: updatedId, name };
+      }
+      return d;
+    });
+    
+    // If ID changed, we need to update activeDeptId too
+    const oldDept = localData.find(d => d.id === id);
+    const newDept = newData.find(nd => nd.name === name && nd.id !== id);
+    if (newDept && activeDeptId === id) {
+      setActiveDeptId(newDept.id);
+    }
+    
     setLocalData(newData);
   };
 
@@ -391,7 +421,14 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                       dept.type === 'phong' && "pl-8"
                     )}
                   >
-                    {dept.name}
+                    {dept.type === 'phong' ? (
+                      <div className="flex flex-col">
+                        <span className="text-[10px] opacity-60 font-bold uppercase tracking-wider">
+                          {localData.find(d => d.id === dept.parentId)?.name || 'N/A'}
+                        </span>
+                        <span>{dept.name}</span>
+                      </div>
+                    ) : dept.name}
                   </button>
                   {dept.id !== 'all' && (entryTab === 'revenue' || entryTab === 'product') && (
                     <button 
@@ -509,7 +546,7 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
             </div>
 
             <div className="space-y-6 mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="md:col-span-1">
                   <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2">
                     {entryTab === 'product' ? 'Tên sản phẩm' : 'Tên bộ phận'}
@@ -520,6 +557,26 @@ export const DataEntry: React.FC<DataEntryProps> = ({ data, year, initialTab = '
                     onChange={(e) => handleDeptNameChange(activeDept.id, e.target.value)}
                     disabled={activeDept.id === 'all' || activeDept.id === 'tmc'}
                     className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-2 text-rose-500">
+                    Mã bộ phận (ID)
+                  </label>
+                  <input 
+                    type="text" 
+                    value={activeDept.id}
+                    onChange={(e) => {
+                      const newId = e.target.value.trim().toLowerCase().replace(/\s+/g, '_');
+                      if (newId && !localData.find(d => d.id === newId)) {
+                        const newData = localData.map(d => d.id === activeDept.id ? { ...d, id: newId } : d);
+                        setLocalData(newData);
+                        setActiveDeptId(newId);
+                      }
+                    }}
+                    disabled={activeDept.id === 'all' || activeDept.id === 'tmc'}
+                    placeholder="VD: dv_nhat"
+                    className="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-rose-500 outline-none transition-all disabled:opacity-50"
                   />
                 </div>
                 {activeDept.id !== 'all' && activeDept.id !== 'tmc' && entryTab === 'revenue' && (
