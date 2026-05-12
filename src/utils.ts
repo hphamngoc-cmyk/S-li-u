@@ -18,24 +18,24 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export const getPerformanceColor = (percentage: number | null | undefined) => {
+export const getPerformanceColor = (percentage: number | null | undefined, threshold: number = 100) => {
   if (percentage === null || percentage === undefined || isNaN(percentage) || !isFinite(percentage)) return '';
-  if (percentage >= 100) return 'text-emerald-600 bg-emerald-50 border-emerald-100';
-  if (percentage >= 80) return 'text-amber-600 bg-amber-50 border-amber-100';
+  if (percentage >= threshold) return 'text-emerald-600 bg-emerald-50 border-emerald-100';
+  if (percentage >= threshold * 0.8) return 'text-amber-600 bg-amber-50 border-amber-100';
   return 'text-rose-600 bg-rose-50 border-rose-100';
 };
 
-export const getPerformanceBadgeColor = (percentage: number | null | undefined) => {
+export const getPerformanceBadgeColor = (percentage: number | null | undefined, threshold: number = 100) => {
   if (percentage === null || percentage === undefined || isNaN(percentage) || !isFinite(percentage)) return 'bg-zinc-200';
-  if (percentage >= 100) return 'bg-emerald-500';
-  if (percentage >= 80) return 'bg-amber-500';
+  if (percentage >= threshold) return 'bg-emerald-500';
+  if (percentage >= threshold * 0.8) return 'bg-amber-500';
   return 'bg-rose-500';
 };
 
-export const getPerformanceTextColor = (percentage: number | null | undefined) => {
+export const getPerformanceTextColor = (percentage: number | null | undefined, threshold: number = 100) => {
   if (percentage === null || percentage === undefined || isNaN(percentage) || !isFinite(percentage)) return 'text-zinc-400';
-  if (percentage >= 100) return 'text-emerald-600';
-  if (percentage >= 80) return 'text-amber-600';
+  if (percentage >= threshold) return 'text-emerald-600';
+  if (percentage >= threshold * 0.8) return 'text-amber-600';
   return 'text-rose-600';
 };
 

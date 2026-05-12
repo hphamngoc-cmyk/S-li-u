@@ -4,16 +4,17 @@ import { cn } from '../utils';
 
 interface MiniProgressProps {
   percentage: number | null | undefined;
+  threshold?: number;
   className?: string;
 }
 
-export const MiniProgress: React.FC<MiniProgressProps> = ({ percentage, className }) => {
+export const MiniProgress: React.FC<MiniProgressProps> = ({ percentage, threshold = 100, className }) => {
   if (percentage === null || percentage === undefined || isNaN(percentage) || !isFinite(percentage)) return null;
   const cappedPercentage = Math.min(Math.max(percentage, 0), 100);
   
   let colorClass = "bg-rose-500";
-  if (percentage >= 100) colorClass = "bg-emerald-500";
-  else if (percentage >= 80) colorClass = "bg-amber-500";
+  if (percentage >= threshold) colorClass = "bg-emerald-500";
+  else if (percentage >= threshold * 0.8) colorClass = "bg-amber-500";
 
   return (
     <div className={cn("flex items-center gap-1", className)}>

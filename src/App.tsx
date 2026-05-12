@@ -38,6 +38,8 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [visibleCharts, setVisibleCharts] = useState<Set<string>>(new Set());
 
+  const annualThreshold = ((selectedMonth + 1) / 12) * 100;
+
   const PROFIT_INDICATORS = [
     { id: 'netRevenue', name: 'Doanh thu' },
     { id: 'expense', name: 'Chi phí' },
@@ -461,9 +463,9 @@ export default function App() {
         {visibleColumns.annualCompletion && (
           <td className="px-1 py-1.5">
             <div className="flex items-center gap-1 justify-end">
-              <MiniProgress percentage={item.annualCompletion} />
+              <MiniProgress percentage={item.annualCompletion} threshold={annualThreshold} />
               <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                getPerformanceTextColor(item.annualCompletion)
+                getPerformanceTextColor(item.annualCompletion, annualThreshold)
               )}>
                 {formatPercent(item.annualCompletion)}
               </span>
@@ -1905,9 +1907,9 @@ export default function App() {
                           {visibleColumns.annualCompletion && (
                             <td className="px-1 py-1.5">
                               <div className="flex items-center gap-1">
-                                <MiniProgress percentage={item.annualCompletion} />
+                                <MiniProgress percentage={item.annualCompletion} threshold={annualThreshold} />
                                 <span className={cn("text-[11px] font-bold min-w-[28px] text-right", 
-                                  getPerformanceTextColor(item.annualCompletion)
+                                  getPerformanceTextColor(item.annualCompletion, annualThreshold)
                                 )}>
                                   {formatPercent(item.annualCompletion)}
                                 </span>
