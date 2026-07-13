@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { toPng } from 'html-to-image';
+import pptxgen from 'pptxgenjs';
 import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download, Image as ImageIcon, Check, Copy, Plus, Minus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
@@ -848,7 +849,7 @@ export default function App() {
     setIsDataEntryOpen(false);
   };
 
-  const handleExportImage = async () => {
+  const handleExportPowerpoint = async () => {
     if (selectedExportIds.length === 0) return;
     
     setIsExporting(true);
@@ -856,142 +857,792 @@ export default function App() {
     await new Promise(resolve => setTimeout(resolve, 500));
     
     try {
-      // Create a main canvas for the 16:9 output
-      const mainCanvas = document.createElement('canvas');
-      mainCanvas.width = 1920;
-      mainCanvas.height = 1080;
-      const ctx = mainCanvas.getContext('2d');
-      if (!ctx) throw new Error('Could not get canvas context');
-
-      // Fill background
-      ctx.fillStyle = '#f9fafb'; // zinc-50
-      ctx.fillRect(0, 0, 1920, 1080);
-
-      // Draw Header
-      ctx.fillStyle = '#18181b'; // zinc-900
-      ctx.font = 'bold 40px sans-serif';
-      ctx.fillText(`Báo cáo Hiệu suất ${dashboardTab === 'revenue' ? 'Doanh thu' : 'Lợi nhuận'}`, 60, 100);
+      const pptx = new pptxgen();
+      pptx.layout = "LAYOUT_16x9";
       
-      ctx.fillStyle = '#71717a'; // zinc-500
-      ctx.font = 'bold 20px sans-serif';
-      ctx.fillText(`${months[selectedMonth]} - Năm ${selectedYear}`, 60, 140);
+      const themeColorRGB = dashboardTab === 'revenue' ? "3B82F6" : "10B981";
+      const themeName = dashboardTab === 'revenue' ? "DOANH THU" : "LỢI NHUẬN";
 
-      ctx.fillStyle = '#a1a1aa'; // zinc-400
-      ctx.font = '16px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(`Xuất ngày: ${new Date().toLocaleDateString('vi-VN')}`, 1860, 140);
-      ctx.textAlign = 'left';
+      const getExportItemTitle = (id: string): { title: string, subtitle: string } => {
+        if (id === 'section-bans') {
+          return {
+            title: `BẢNG HIỆU SUẤT KHỐI BAN - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            subtitle: "Báo cáo tiến độ hoàn thành các chỉ số hoạt động then chốt"
+          };
+        }
+        if (id === 'company-charts') {
+          return {
+            title: `BIỂU ĐỒ DIỄN BIẾN KHỐI BAN - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            subtitle: "Xu hướng chỉ số hiệu suất hoạt động qua các tháng - Khối Ban"
+          };
+        }
+        if (id === 'company-charts-profit') {
+          return {
+            title: `BIỂU ĐỒ DIỄN BIẾN TOÀN CÔNG TY - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            subtitle: "Diễn biến chỉ tiêu EBITDA thực tế so với kế hoạch và cùng kỳ năm trước"
+          };
+        }
+        if (id === 'section-centers') {
+          return {
+            title: dashboardTab === 'profit' ? `BẢNG HỢP NHẤT DOANH NGHIỆP` : `BẢNG TỔNG HỢP TRUNG TÂM`,
+            subtitle: dashboardTab === 'profit' ? "Báo cáo tích hợp toàn diện Doanh thu, Chi phí, PBT và EBITDA" : "Báo cáo tổng hợp số liệu hiệu quả hoạt động các Trung tâm"
+          };
+        }
+        
+        if (id.startsWith('center-table-')) {
+          const centerId = id.replace('center-table-', '');
+          const center = allDepts.find(d => d.id === centerId);
+          return {
+            title: `BẢNG HIỆU SUẤT TRUNG TÂM ${center?.name.toUpperCase() || 'BỘ PHẬN'}`,
+            subtitle: `Sự đóng góp hiệu quả và tiến độ hoàn thành kế hoạch năm của bộ phận ${center?.name || ''}`
+          };
+        }
+        if (id.startsWith('center-charts-')) {
+          const centerId = id.replace('center-charts-', '');
+          const center = allDepts.find(d => d.id === centerId);
+          return {
+            title: `BIỂU ĐỒ PHÂN TÍCH - ${center?.name.toUpperCase() || 'BỘ PHẬN'}`,
+            subtitle: `Biểu đồ diễn biến lũy kế và so sánh trực quan của Bộ phận ${center?.name || ''}`
+          };
+        }
+        
+        return {
+          title: "CHI TIẾT CHỈ SỐ HOẠT ĐỘNG",
+          subtitle: "Thống kê so sánh thực tế, kế hoạch và cùng kỳ năm trước"
+        };
+      };
 
-      // Draw separator line
-      ctx.strokeStyle = '#e4e4e7'; // zinc-200
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(60, 170);
-      ctx.lineTo(1860, 170);
-      ctx.stroke();
-
-      // Capture each element as an image
-      const images = [];
-      for (const id of selectedExportIds) {
-        const element = document.getElementById(id);
-        if (element) {
-          // Use toPng with some options for better reliability
-          const dataUrl = await toPng(element, {
-            backgroundColor: '#ffffff',
-            quality: 1,
-            pixelRatio: 2,
-            cacheBust: true,
-            style: {
-              borderRadius: '0' // Ensure clean edges for the capture
+      const getTableDataForId = (id: string) => {
+        const rows: any[] = [];
+        
+        if (id === 'section-bans') {
+          // Company total row
+          rows.push({
+            name: sortedOverview.company.name,
+            data: sortedOverview.company,
+            isHeaderTotal: true,
+            indent: 0
+          });
+          // Bans rows
+          sortedOverview.bansSection.filter((d: any) => d.type === 'ban').forEach((dept: any) => {
+            rows.push({
+              name: dept.name,
+              data: dept,
+              isHeaderTotal: false,
+              indent: 1
+            });
+          });
+        } 
+        else if (id === 'section-centers') {
+          if (dashboardTab === 'profit') {
+            // Unified Company total
+            rows.push({
+              name: sortedOverview.centersTotal.name,
+              isGroupHeader: true,
+              indent: 0
+            });
+            sortedOverview.centersTotal.profitIndicators.forEach((ind: any) => {
+              rows.push({
+                name: ind.name,
+                data: ind,
+                isIndicator: true,
+                indicatorId: ind.id,
+                indent: 1
+              });
+            });
+            // Individual centers
+            sortedOverview.centersSection.filter((d: any) => d.type === 'center').forEach((center: any) => {
+              rows.push({
+                name: center.name,
+                isGroupHeader: true,
+                indent: 1
+              });
+              center.profitIndicators.forEach((ind: any) => {
+                rows.push({
+                  name: ind.name,
+                  data: ind,
+                  isIndicator: true,
+                  indicatorId: ind.id,
+                  indent: 2
+                });
+              });
+            });
+          } else {
+            // Revenue/Product tab
+            // Total Row
+            rows.push({
+              name: sortedOverview.centersTotal.name,
+              data: sortedOverview.centersTotal,
+              isHeaderTotal: true,
+              indent: 0
+            });
+            // Center Rows
+            sortedOverview.centersSection.filter((d: any) => d.type === 'center').forEach((center: any) => {
+              rows.push({
+                name: center.name,
+                data: center,
+                isHeaderTotal: false,
+                indent: 1
+              });
+            });
+          }
+        } 
+        else if (id.startsWith('center-table-')) {
+          const centerId = id.replace('center-table-', '');
+          const center = sortedOverview.centersSection.find((d: any) => d.id === centerId);
+          if (center) {
+            if (dashboardTab === 'profit') {
+              rows.push({
+                name: center.name,
+                isGroupHeader: true,
+                indent: 0
+              });
+              center.profitIndicators.forEach((ind: any) => {
+                rows.push({
+                  name: ind.name,
+                  data: ind,
+                  isIndicator: true,
+                  indicatorId: ind.id,
+                  indent: 1
+                });
+              });
+            } else if (dashboardTab === 'revenue') {
+              rows.push({
+                name: center.name,
+                data: center,
+                isHeaderTotal: true,
+                indent: 0
+              });
+              center.phongs?.forEach((phong: any) => {
+                rows.push({
+                  name: phong.name,
+                  data: phong,
+                  isHeaderTotal: false,
+                  indent: 1
+                });
+              });
+            } else if (dashboardTab === 'product') {
+              // Product tab
+              rows.push({
+                name: center.name,
+                data: center,
+                isHeaderTotal: true,
+                indent: 0
+              });
+              sortedOverview.productsSection.filter((p: any) => p.type !== 'company').forEach((p: any) => {
+                rows.push({
+                  name: p.name,
+                  data: p,
+                  isHeaderTotal: false,
+                  indent: 1
+                });
+              });
             }
-          });
-          
-          // Load the image
-          const img = new Image();
-          await new Promise((resolve, reject) => {
-            img.onload = resolve;
-            img.onerror = reject;
-            img.src = dataUrl;
-          });
-          images.push(img);
+          }
         }
-      }
+        
+        return rows;
+      };
 
-      if (images.length === 0) return;
+      // -----------------------------------------------------------------------
+      // SLIDE 1: COVER SLIDE (ELEGANT DARK THEME)
+      // -----------------------------------------------------------------------
+      const slideCover = pptx.addSlide();
+      slideCover.background = { color: "111827" }; // Cool dark gray-900
 
-      // Layout logic
-      const padding = 60;
-      const startY = 220;
-      const availableWidth = 1920 - (padding * 2);
-      const availableHeight = 1080 - startY - padding;
+      // Left bar border decoration
+      slideCover.addShape((pptx as any).shapes.RECTANGLE, {
+        x: 0,
+        y: 0,
+        w: 0.15,
+        h: 5.625,
+        fill: { color: themeColorRGB }
+      });
 
-      if (images.length === 1) {
-        const img = images[0];
-        const ratio = img.width / img.height;
-        let drawWidth = availableWidth;
-        let drawHeight = drawWidth / ratio;
+      // Presenter Logo or Icon Placeholder
+      slideCover.addShape((pptx as any).shapes.OVAL, {
+        x: 0.8,
+        y: 0.5,
+        w: 0.35,
+        h: 0.35,
+        fill: { color: themeColorRGB }
+      });
+      slideCover.addText("N", {
+        x: 0.8,
+        y: 0.5,
+        w: 0.35,
+        h: 0.35,
+        fontSize: 14,
+        bold: true,
+        color: "FFFFFF",
+        align: "center",
+        valign: "middle",
+        fontFace: "Segoe UI"
+      });
 
-        if (drawHeight > availableHeight) {
-          drawHeight = availableHeight;
-          drawWidth = drawHeight * ratio;
-        }
+      slideCover.addText("NURA VIETNAM", {
+        x: 1.25,
+        y: 0.5,
+        w: 4.0,
+        h: 0.35,
+        fontSize: 10,
+        bold: true,
+        color: "9CA3AF",
+        valign: "middle",
+        fontFace: "Segoe UI"
+      });
 
-        const x = padding + (availableWidth - drawWidth) / 2;
-        const y = startY + (availableHeight - drawHeight) / 2;
-        ctx.drawImage(img, x, y, drawWidth, drawHeight);
-      } else {
-        // Grid layout for multiple images
-        const cols = 2;
-        const rows = Math.ceil(images.length / cols);
-        const cellWidth = (availableWidth - 40) / cols;
-        const cellHeight = (availableHeight - (40 * (rows - 1))) / rows;
+      // Main Title
+      slideCover.addText("BÁO CÁO HIỆU SUẤT HOẠT ĐỘNG", {
+        x: 0.8,
+        y: 1.4,
+        w: 8.4,
+        h: 0.6,
+        fontSize: 26,
+        bold: true,
+        color: "FFFFFF",
+        fontFace: "Segoe UI"
+      });
 
-        images.forEach((img, index) => {
-          const col = index % cols;
-          const row = Math.floor(index / cols);
+      slideCover.addText(`HỆ THỐNG QUẢN TRỊ HIỆU QUẢ ${themeName} • THÁNG ${selectedMonth + 1}/${selectedYear}`, {
+        x: 0.8,
+        y: 2.1,
+        w: 8.4,
+        h: 0.4,
+        fontSize: 12,
+        bold: true,
+        color: themeColorRGB,
+        fontFace: "Segoe UI"
+      });
+
+      // Horizontal separator line
+      slideCover.addShape((pptx as any).shapes.RECTANGLE, {
+        x: 0.8,
+        y: 2.6,
+        w: 4.5,
+        h: 0.02,
+        fill: { color: "374151" } // Dark border color
+      });
+
+      // Parameters Panel List
+      slideCover.addText([
+        { text: "Kỳ báo cáo: ", options: { bold: true, color: "9CA3AF" } },
+        { text: `Tháng ${selectedMonth + 1} năm ${selectedYear}\n`, options: { color: "F3F4F6" } },
+        { text: "Phạm vi: ", options: { bold: true, color: "9CA3AF" } },
+        { text: "Hợp nhất các bộ phận và đơn vị thành viên toàn công ty\n", options: { color: "F3F4F6" } },
+        { text: "Tiêu chí phân tích: ", options: { bold: true, color: "9CA3AF" } },
+        { text: `Đo lường tiến độ hoàn thành Kế hoạch (Plan) & So sánh tăng trưởng Cùng kỳ (Last Year)\n`, options: { color: "F3F4F6" } },
+        { text: "Thời gian xuất bản: ", options: { bold: true, color: "9CA3AF" } },
+        { text: `${new Date().toLocaleDateString('vi-VN')} lúc ${new Date().toLocaleTimeString('vi-VN')}`, options: { color: "F3F4F6" } }
+      ], {
+        x: 0.8,
+        y: 2.9,
+        w: 8.4,
+        h: 1.5,
+        fontSize: 10,
+        lineSpacing: 18,
+        fontFace: "Segoe UI"
+      });
+
+      // Organization Footnote
+      slideCover.addText("Phòng Quản lý Hiệu quả Hoạt động (BPMA) • Báo cáo Lưu hành Nội bộ", {
+        x: 0.8,
+        y: 4.8,
+        w: 8.4,
+        h: 0.3,
+        fontSize: 8,
+        bold: true,
+        color: "4B5563",
+        fontFace: "Segoe UI"
+      });
+
+      // Decorative right stripe
+      slideCover.addShape((pptx as any).shapes.RECTANGLE, {
+        x: 9.85,
+        y: 0,
+        w: 0.15,
+        h: 5.625,
+        fill: { color: "1F2937" }
+      });
+
+      // -----------------------------------------------------------------------
+      // SLIDES 2+: CONTENT SLIDES WITH NATIVE TABLES & NATIVE VECTOR CHARTS
+      // -----------------------------------------------------------------------
+      for (let i = 0; i < selectedExportIds.length; i++) {
+        const id = selectedExportIds[i];
+        const slide = pptx.addSlide();
+        slide.background = { color: "F8FAFC" }; // Elegant light slate slate-50
+
+        const desc = getExportItemTitle(id);
+
+        // Header decoration: left vertical indicator line
+        slide.addShape((pptx as any).shapes.RECTANGLE, {
+          x: 0.5,
+          y: 0.3,
+          w: 0.08,
+          h: 0.45,
+          fill: { color: themeColorRGB }
+        });
+
+        // Heading Title
+        slide.addText(desc.title, {
+          x: 0.7,
+          y: 0.28,
+          w: 8.0,
+          h: 0.28,
+          fontSize: 14,
+          bold: true,
+          color: "1F2937",
+          fontFace: "Segoe UI"
+        });
+
+        // Subtitle / context description
+        slide.addText(desc.subtitle, {
+          x: 0.7,
+          y: 0.56,
+          w: 8.0,
+          h: 0.2,
+          fontSize: 8.5,
+          italic: true,
+          color: "6B7280",
+          fontFace: "Segoe UI"
+        });
+
+        // Top horizontal divider line
+        slide.addShape((pptx as any).shapes.RECTANGLE, {
+          x: 0.5,
+          y: 0.82,
+          w: 9.0,
+          h: 0.012,
+          fill: { color: "E2E8F0" }
+        });
+
+        // Determine if this is a chart slide or table slide
+        const isChart = id === 'company-charts' || id === 'company-charts-profit' || id.startsWith('center-charts-');
+
+        if (isChart) {
+          // Chart rendering
+          const isProfit = dashboardTab === 'profit';
+          const dept = id === 'company-charts' || id === 'company-charts-profit'
+            ? sortedOverview.company 
+            : allDepts.find(d => d.id === id.replace('center-charts-', ''));
           
-          const ratio = img.width / img.height;
-          let drawWidth = cellWidth;
-          let drawHeight = drawWidth / ratio;
+          if (dept) {
+            const chartLineData = months.slice(0, selectedMonth + 1).map((m, idx) => {
+              const monthData = dept.monthly?.[idx] || {};
+              if (isProfit) {
+                return {
+                  name: m,
+                  actual: monthData.ebitdaActual || 0,
+                  plan: monthData.ebitdaPlan || 0,
+                  lastYear: monthData.ebitdaLastYear || 0
+                };
+              }
+              return {
+                name: m,
+                actual: monthData.actual || 0,
+                plan: monthData.plan || 0,
+                lastYear: monthData.lastYear || 0
+              };
+            });
 
-          if (drawHeight > cellHeight) {
-            drawHeight = cellHeight;
-            drawWidth = drawHeight * ratio;
+            // Add Native Chart
+            const categories = chartLineData.map(d => d.name);
+            const actuals = chartLineData.map(d => d.actual);
+            const plans = chartLineData.map(d => d.plan);
+            const lastYears = chartLineData.map(d => d.lastYear);
+
+            const chartData = [
+              {
+                name: "Thực tế",
+                labels: categories,
+                values: actuals
+              },
+              {
+                name: "Kế hoạch",
+                labels: categories,
+                values: plans
+              },
+              {
+                name: "Cùng kỳ",
+                labels: categories,
+                values: lastYears
+              }
+            ];
+
+            slide.addChart((pptx as any).charts.LINE, chartData, {
+              x: 0.5,
+              y: 1.1,
+              w: 5.2,
+              h: 3.8,
+              showLegend: true,
+              legendPos: "b",
+              lineDataSymbol: "circle",
+              lineDataSymbolSize: 4,
+              chartColors: ["3B82F6", "94A3B8", "CBD5E1"],
+              title: isProfit ? "Diễn biến EBITDA qua các tháng" : "Diễn biến doanh thu qua các tháng",
+              titleColor: "1F2937",
+              titleFontSize: 10,
+              titleFontFace: "Segoe UI"
+            });
+
+            // Add monthly numbers table next to it!
+            const chartTableRows: any[] = [
+              [
+                { text: "Tháng", options: { bold: true, align: "center", fill: { color: "F1F5F9" }, color: "1F2937", fontFace: "Segoe UI", fontSize: 8, border: { pt: 1, color: "CBD5E1" } } },
+                { text: "Thực tế", options: { bold: true, align: "center", fill: { color: "DBEAFE" }, color: "1E3A8A", fontFace: "Segoe UI", fontSize: 8, border: { pt: 1, color: "CBD5E1" } } },
+                { text: "Kế hoạch", options: { bold: true, align: "center", fill: { color: "FEF3C7" }, color: "78350F", fontFace: "Segoe UI", fontSize: 8, border: { pt: 1, color: "CBD5E1" } } },
+                { text: "Cùng kỳ", options: { bold: true, align: "center", fill: { color: "E2E8F0" }, color: "334155", fontFace: "Segoe UI", fontSize: 8, border: { pt: 1, color: "CBD5E1" } } }
+              ]
+            ];
+
+            chartLineData.forEach(row => {
+              chartTableRows.push([
+                { text: row.name, options: { align: "center", fill: { color: "FFFFFF" }, color: "334155", fontFace: "Segoe UI", fontSize: 7.5, border: { pt: 1, color: "E2E8F0" } } },
+                { text: formatNumber(row.actual), options: { align: "right", fill: { color: "FFFFFF" }, color: "1F2937", fontFace: "Segoe UI", fontSize: 7.5, border: { pt: 1, color: "E2E8F0" } } },
+                { text: formatNumber(row.plan), options: { align: "right", fill: { color: "FFFFFF" }, color: "4B5563", fontFace: "Segoe UI", fontSize: 7.5, border: { pt: 1, color: "E2E8F0" } } },
+                { text: formatNumber(row.lastYear), options: { align: "right", fill: { color: "FFFFFF" }, color: "4B5563", fontFace: "Segoe UI", fontSize: 7.5, border: { pt: 1, color: "E2E8F0" } } }
+              ]);
+            });
+
+            slide.addTable(chartTableRows, {
+              x: 5.9,
+              y: 1.1,
+              w: 3.6,
+              h: Math.min(3.8, chartTableRows.length * 0.22),
+              colW: [0.8, 0.9, 0.9, 1.0]
+            });
+          }
+        } else {
+          // Table rendering
+          // Columns
+          const cols: any[] = [{ id: 'dept', label: dashboardTab === 'product' ? 'Sản phẩm' : 'Bộ phận' }];
+          if (visibleColumns.monthActual) cols.push({ id: 'monthActual', label: 'Thực tế' });
+          if (visibleColumns.monthPlan) cols.push({ id: 'monthPlan', label: 'KH' });
+          if (visibleColumns.monthPerfVsPlan) cols.push({ id: 'monthPerfVsPlan', label: '% KH' });
+          if (visibleColumns.monthLastYear) cols.push({ id: 'monthLastYear', label: 'Cùng kỳ' });
+          if (visibleColumns.monthPerfVsLastYear) cols.push({ id: 'monthPerfVsLastYear', label: '% CK' });
+
+          if (visibleColumns.actual) cols.push({ id: 'actual', label: 'Thực tế' });
+          if (visibleColumns.plan) cols.push({ id: 'plan', label: 'KH' });
+          if (visibleColumns.perfVsPlan) cols.push({ id: 'perfVsPlan', label: '% KH' });
+          if (visibleColumns.lastYear) cols.push({ id: 'lastYear', label: 'Cùng kỳ' });
+          if (visibleColumns.perfVsLastYear) cols.push({ id: 'perfVsLastYear', label: '% CK' });
+
+          if (visibleColumns.annualPlan) cols.push({ id: 'annualPlan', label: 'KH Năm' });
+          if (visibleColumns.annualCompletion) cols.push({ id: 'annualCompletion', label: '% HT' });
+
+          const row1: any[] = [];
+          const row2: any[] = [];
+
+          // Column 0
+          row1.push({ 
+            text: dashboardTab === 'product' ? 'Sản phẩm' : 'Bộ phận', 
+            options: { 
+              rowspan: 2, 
+              bold: true, 
+              align: "center", 
+              fill: { color: "F1F5F9" }, 
+              color: "1F2937",
+              fontFace: "Segoe UI", 
+              fontSize: 7.5, 
+              valign: "middle", 
+              border: { pt: 1, color: "CBD5E1" },
+              margin: [2, 3, 2, 3]
+            } 
+          });
+
+          // Month group
+          const monthCols: string[] = [];
+          if (visibleColumns.monthActual) monthCols.push("Thực tế");
+          if (visibleColumns.monthPlan) monthCols.push("KH");
+          if (visibleColumns.monthPerfVsPlan) monthCols.push("% KH");
+          if (visibleColumns.monthLastYear) monthCols.push("Cùng kỳ");
+          if (visibleColumns.monthPerfVsLastYear) monthCols.push("% CK");
+
+          if (monthCols.length > 0) {
+            row1.push({ 
+              text: `Tháng ${selectedMonth + 1}`, 
+              options: { 
+                colspan: monthCols.length, 
+                bold: true, 
+                align: "center", 
+                fill: { color: "DBEAFE" }, 
+                color: "1E3A8A",
+                fontFace: "Segoe UI", 
+                fontSize: 7.5, 
+                valign: "middle", 
+                border: { pt: 1, color: "CBD5E1" },
+                margin: [2, 3, 2, 3]
+              } 
+            });
+            monthCols.forEach(label => {
+              row2.push({ 
+                text: label, 
+                options: { 
+                  bold: true, 
+                  align: "center", 
+                  fill: { color: "EFF6FF" }, 
+                  color: "1E40AF",
+                  fontFace: "Segoe UI", 
+                  fontSize: 7.0, 
+                  valign: "middle", 
+                  border: { pt: 1, color: "CBD5E1" },
+                  margin: [2, 3, 2, 3]
+                } 
+              });
+            });
           }
 
-          const x = padding + col * (cellWidth + 40) + (cellWidth - drawWidth) / 2;
-          const y = startY + row * (cellHeight + 40) + (cellHeight - drawHeight) / 2;
-          
-          // Add a small shadow/border for each table
-          ctx.shadowColor = 'rgba(0,0,0,0.1)';
-          ctx.shadowBlur = 10;
-          ctx.shadowOffsetX = 0;
-          ctx.shadowOffsetY = 4;
-          ctx.fillStyle = '#ffffff';
-          ctx.fillRect(x, y, drawWidth, drawHeight);
-          ctx.shadowBlur = 0;
-          ctx.shadowOffsetY = 0;
-          
-          ctx.drawImage(img, x, y, drawWidth, drawHeight);
-          
-          // Border
-          ctx.strokeStyle = '#e4e4e7';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(x, y, drawWidth, drawHeight);
+          // Cumulative group
+          const cumCols: string[] = [];
+          if (visibleColumns.actual) cumCols.push("Thực tế");
+          if (visibleColumns.plan) cumCols.push("KH");
+          if (visibleColumns.perfVsPlan) cumCols.push("% KH");
+          if (visibleColumns.lastYear) cumCols.push("Cùng kỳ");
+          if (visibleColumns.perfVsLastYear) cumCols.push("% CK");
+
+          if (cumCols.length > 0) {
+            row1.push({ 
+              text: "Lũy kế", 
+              options: { 
+                colspan: cumCols.length, 
+                bold: true, 
+                align: "center", 
+                fill: { color: "FEF3C7" }, 
+                color: "78350F",
+                fontFace: "Segoe UI", 
+                fontSize: 7.5, 
+                valign: "middle", 
+                border: { pt: 1, color: "CBD5E1" },
+                margin: [2, 3, 2, 3]
+              } 
+            });
+            cumCols.forEach(label => {
+              row2.push({ 
+                text: label, 
+                options: { 
+                  bold: true, 
+                  align: "center", 
+                  fill: { color: "FFFDF5" }, 
+                  color: "92400E",
+                  fontFace: "Segoe UI", 
+                  fontSize: 7.0, 
+                  valign: "middle", 
+                  border: { pt: 1, color: "CBD5E1" },
+                  margin: [2, 3, 2, 3]
+                } 
+              });
+            });
+          }
+
+          // Annual group
+          const annualCols: string[] = [];
+          if (visibleColumns.annualPlan) annualCols.push("KH Năm");
+          if (visibleColumns.annualCompletion) annualCols.push("% HT");
+
+          if (annualCols.length > 0) {
+            row1.push({ 
+              text: "Năm", 
+              options: { 
+                colspan: annualCols.length, 
+                bold: true, 
+                align: "center", 
+                fill: { color: "E2E8F0" }, 
+                color: "334155",
+                fontFace: "Segoe UI", 
+                fontSize: 7.5, 
+                valign: "middle", 
+                border: { pt: 1, color: "CBD5E1" },
+                margin: [2, 3, 2, 3]
+              } 
+            });
+            annualCols.forEach(label => {
+              row2.push({ 
+                text: label, 
+                options: { 
+                  bold: true, 
+                  align: "center", 
+                  fill: { color: "F1F5F9" }, 
+                  color: "475569",
+                  fontFace: "Segoe UI", 
+                  fontSize: 7.0, 
+                  valign: "middle", 
+                  border: { pt: 1, color: "CBD5E1" },
+                  margin: [2, 3, 2, 3]
+                } 
+              });
+            });
+          }
+
+          const pptxRows: any[] = [];
+          pptxRows.push(row1);
+          if (row2.length > 0) {
+            pptxRows.push(row2);
+          }
+
+          const dataRows = getTableDataForId(id);
+          dataRows.forEach(row => {
+            if (row.isGroupHeader) {
+              pptxRows.push([
+                {
+                  text: row.name.toUpperCase(),
+                  options: {
+                    colspan: cols.length,
+                    bold: true,
+                    fill: { color: "E2E8F0" },
+                    color: "0F172A",
+                    fontSize: 8.0,
+                    fontFace: "Segoe UI",
+                    align: "left",
+                    valign: "middle",
+                    border: { pt: 1, color: "CBD5E1" },
+                    margin: [2, 4, 2, 4]
+                  }
+                }
+              ]);
+            } else {
+              const cells: any[] = [];
+              const isBold = row.isHeaderTotal || row.indent === 0;
+              const bgFill = row.isHeaderTotal ? "F1F5F9" : (row.isIndicator ? "FFFFFF" : (row.indent === 1 && dashboardTab !== 'profit' ? "F8FAFC" : "FFFFFF"));
+              const textColor = isBold ? "0F172A" : "334155";
+              
+              let displayName = row.name;
+              if (row.indent === 1 && !isBold) displayName = "  " + displayName;
+              if (row.indent === 2) displayName = "    " + displayName;
+
+              cells.push({
+                text: displayName,
+                options: {
+                  bold: isBold,
+                  fill: { color: bgFill },
+                  color: textColor,
+                  fontSize: isBold ? 7.5 : 7.0,
+                  fontFace: "Segoe UI",
+                  align: "left",
+                  valign: "middle",
+                  border: { pt: 1, color: "E2E8F0" },
+                  margin: [2, 3, 2, 3]
+                }
+              });
+
+              cols.slice(1).forEach(col => {
+                let val: any = null;
+                let isPercent = false;
+                
+                if (col.id === 'monthActual') { val = row.data?.monthActual; }
+                else if (col.id === 'monthPlan') { val = row.data?.monthPlan; }
+                else if (col.id === 'monthPerfVsPlan') { val = row.data?.monthPerfVsPlan; isPercent = true; }
+                else if (col.id === 'monthLastYear') { val = row.data?.monthLastYear; }
+                else if (col.id === 'monthPerfVsLastYear') { val = row.data?.monthPerfVsLastYear; isPercent = true; }
+                else if (col.id === 'actual') { val = row.data?.actual; }
+                else if (col.id === 'plan') { val = row.data?.plan; }
+                else if (col.id === 'perfVsPlan') { val = row.data?.perfVsPlan; isPercent = true; }
+                else if (col.id === 'lastYear') { val = row.data?.lastYear; }
+                else if (col.id === 'perfVsLastYear') { val = row.data?.perfVsLastYear; isPercent = true; }
+                else if (col.id === 'annualPlan') { val = row.data?.annualPlan; }
+                else if (col.id === 'annualCompletion') { val = row.data?.annualCompletion; isPercent = true; }
+
+                let cellText = "";
+                let cellColor = isBold ? "0F172A" : "475569";
+                let cellBg = bgFill;
+
+                if (isPercent) {
+                  if (val !== null && val !== undefined && !isNaN(val) && isFinite(val)) {
+                    cellText = formatPercent(val);
+                    const threshold = col.id === 'annualCompletion' ? annualThreshold : 100;
+                    if (val >= threshold) {
+                      cellColor = "15803D"; // Green-700
+                      cellBg = "DCFCE7"; // Green-100
+                    } else if (val >= threshold * 0.8) {
+                      cellColor = "B45309"; // Amber-700
+                      cellBg = "FEF3C7"; // Amber-100
+                    } else {
+                      cellColor = "B91C1C"; // Red-700
+                      cellBg = "FEE2E2"; // Red-100
+                    }
+                  } else {
+                    cellText = "-";
+                  }
+                } else {
+                  if (val !== null && val !== undefined && !isNaN(val) && isFinite(val)) {
+                    cellText = formatNumber(val);
+                  } else {
+                    cellText = "-";
+                  }
+                }
+
+                if (row.isIndicator && (row.indicatorId === 'pbt' || row.indicatorId === 'ebitda')) {
+                  if (!isPercent) {
+                    cellBg = "FEF3C7"; // Amber highlight
+                    cellColor = "1E293B";
+                  }
+                }
+
+                cells.push({
+                  text: cellText,
+                  options: {
+                    bold: isBold || (row.isIndicator && (row.indicatorId === 'pbt' || row.indicatorId === 'ebitda')),
+                    fill: { color: cellBg },
+                    color: cellColor,
+                    fontSize: isBold ? 7.0 : 6.5,
+                    fontFace: "Segoe UI",
+                    align: isPercent ? "center" : "right",
+                    valign: "middle",
+                    border: { pt: 1, color: "E2E8F0" },
+                    margin: [2, 3, 2, 3]
+                  }
+                });
+              });
+
+              pptxRows.push(cells);
+            }
+          });
+
+          const remainingWidth = 9.0 - 1.5;
+          const colWidths = [1.5, ...Array(cols.length - 1).fill(remainingWidth / (cols.length - 1))];
+
+          slide.addTable(pptxRows, {
+            x: 0.5,
+            y: 0.95,
+            w: 9.0,
+            h: Math.min(4.1, pptxRows.length * 0.22),
+            colW: colWidths
+          });
+        }
+
+        // Footer block section
+        slide.addText("Công ty Cổ phần Nura Việt Nam • Bộ phận Quản trị Hiệu quả BPMA", {
+          x: 0.5,
+          y: 5.15,
+          w: 5.0,
+          h: 0.2,
+          fontSize: 7.5,
+          color: "94A3B8",
+          fontFace: "Segoe UI"
+        });
+
+        // Page Number Indicator
+        slide.addText(`Slide ${i + 2} / ${selectedExportIds.length + 1}`, {
+          x: 7.5,
+          y: 5.15,
+          w: 2.0,
+          h: 0.2,
+          fontSize: 7.5,
+          align: "right",
+          color: "94A3B8",
+          fontFace: "Segoe UI"
         });
       }
 
-      // Export
-      const finalDataUrl = mainCanvas.toDataURL('image/png');
-      const link = document.createElement('a');
-      link.download = `Bao-cao-${dashboardTab}-${selectedYear}-${selectedMonth + 1}.png`;
-      link.href = finalDataUrl;
-      link.click();
-      
+      await pptx.writeFile({
+        fileName: `Bao-cao-hieu-suat-${dashboardTab}-${selectedYear}-${selectedMonth + 1}.pptx`
+      });
+
       setIsExportModalOpen(false);
     } catch (err) {
-      console.error('Export failed', err);
-      alert('Có lỗi xảy ra khi xuất ảnh. Vui lòng thử lại.');
+      console.error('PPTX export error', err);
+      alert('Có lỗi xảy ra khi tạo file PowerPoint. Vui lòng thử lại.');
     } finally {
       setIsExporting(false);
     }
@@ -1205,8 +1856,8 @@ export default function App() {
               onClick={() => setIsExportModalOpen(true)}
               className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 transition-all shadow-sm"
             >
-              <ImageIcon size={16} className="text-zinc-400" />
-              <span className="hidden sm:inline">Xuất ảnh</span>
+              <TableIcon size={16} className="text-zinc-400" strokeWidth={2} />
+              <span className="hidden sm:inline">Xuất PowerPoint</span>
             </button>
 
             {/* Year Selector */}
@@ -2301,11 +2952,11 @@ export default function App() {
               <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between bg-zinc-50">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-zinc-900 rounded-xl flex items-center justify-center text-white">
-                    <ImageIcon size={20} />
+                    <TableIcon size={20} />
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-zinc-900">Xuất ảnh báo cáo</h3>
-                    <p className="text-xs text-zinc-500 font-medium">Chọn các bảng dữ liệu để đưa vào ảnh (Size 16:9)</p>
+                    <h3 className="text-lg font-bold text-zinc-900">Xuất slide PowerPoint</h3>
+                    <p className="text-xs text-zinc-500 font-medium">Chọn bảng/biểu đồ để xuất file PPTX chất lượng cao chuyên nghiệp</p>
                   </div>
                 </div>
                 <button 
@@ -2445,11 +3096,11 @@ export default function App() {
                   <div className="flex items-start gap-3">
                     <Info size={18} className="text-zinc-400 mt-0.5 shrink-0" />
                     <div className="space-y-1">
-                      <p className="text-xs font-bold text-zinc-700">Lưu ý khi xuất ảnh:</p>
+                      <p className="text-xs font-bold text-zinc-700">Lưu ý khi xuất PowerPoint:</p>
                       <ul className="text-[11px] text-zinc-500 space-y-1 list-disc pl-4">
-                        <li>Ảnh sẽ được xuất với độ phân giải cao (1920x1080).</li>
-                        <li>Nếu chọn nhiều bảng, chúng sẽ được sắp xếp tự động để tối ưu không gian.</li>
-                        <li>Đảm bảo các bảng dữ liệu đang hiển thị đầy đủ trên màn hình trước khi xuất.</li>
+                        <li>Mỗi bảng dữ liệu hoặc biểu đồ đã chọn sẽ được thiết kế trên 1 slide riêng biệt.</li>
+                        <li>Báo cáo tự động chèn slide mở đầu (Cover Slide) thiết kế sang trọng, chuyên nghiệp.</li>
+                        <li>Hỗ trợ xuất chất lượng cao, cực kỳ sắc nét, giữ trọn vẹn màu sắc trang nhã tinh tế của hệ thống.</li>
                       </ul>
                     </div>
                   </div>
@@ -2458,7 +3109,7 @@ export default function App() {
 
               <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-100 flex items-center justify-between">
                 <div className="text-xs text-zinc-500 font-bold">
-                  Đã chọn: <span className="text-zinc-900">{selectedExportIds.length}</span> bảng
+                  Đã chọn: <span className="text-zinc-900">{selectedExportIds.length}</span> báo cáo
                 </div>
                 <div className="flex items-center gap-3">
                   <button 
@@ -2468,7 +3119,7 @@ export default function App() {
                     Xóa chọn
                   </button>
                   <button 
-                    onClick={handleExportImage}
+                    onClick={handleExportPowerpoint}
                     disabled={selectedExportIds.length === 0 || isExporting}
                     className={cn(
                       "flex items-center gap-2 px-6 py-2 rounded-xl text-sm font-bold text-white transition-all shadow-lg",
@@ -2480,12 +3131,12 @@ export default function App() {
                     {isExporting ? (
                       <>
                         <RefreshCw size={16} className="animate-spin" />
-                        <span>Đang xử lý...</span>
+                        <span>Đang tạo slide...</span>
                       </>
                     ) : (
                       <>
                         <Download size={16} />
-                        <span>Tải ảnh PNG</span>
+                        <span>Xuất PowerPoint (.pptx)</span>
                       </>
                     )}
                   </button>
