@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { toPng } from 'html-to-image';
 import pptxgen from 'pptxgenjs';
-import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download, Image as ImageIcon, Check, Copy, Plus, Minus } from 'lucide-react';
+import { LayoutDashboard, ChevronDown, Filter, Info, Settings, Table as TableIcon, ArrowUpDown, ArrowUpNarrowWide, ArrowDownWideNarrow, X, Cloud, RefreshCw, ExternalLink, Download, Image as ImageIcon, Check, Copy, Plus, Minus, Calendar } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -11,16 +11,59 @@ import { MiniProgress } from './components/MiniProgress';
 import { DepartmentData } from './types';
 import { cn, formatNumber, formatPercent, getPerformanceBadgeColor, calculatePerformance, getPerformanceTextColor, slugify } from './utils';
 
+export type PeriodType = 'month' | 'quarter' | 'half' | 'year';
+
+export interface DashboardPeriod {
+  id: string;
+  type: PeriodType;
+  label: string;
+  shortLabel: string;
+  subLabel: string;
+  months: number[];
+  cumulativeUpToMonth: number;
+}
+
+export const PERIODS: DashboardPeriod[] = [
+  // 4 Quarters
+  { id: 'q-1', type: 'quarter', label: 'Quý 1', shortLabel: 'Q1', subLabel: 'Tháng 1 - 3', months: [0, 1, 2], cumulativeUpToMonth: 2 },
+  { id: 'q-2', type: 'quarter', label: 'Quý 2', shortLabel: 'Q2', subLabel: 'Tháng 4 - 6', months: [3, 4, 5], cumulativeUpToMonth: 5 },
+  { id: 'q-3', type: 'quarter', label: 'Quý 3', shortLabel: 'Q3', subLabel: 'Tháng 7 - 9', months: [6, 7, 8], cumulativeUpToMonth: 8 },
+  { id: 'q-4', type: 'quarter', label: 'Quý 4', shortLabel: 'Q4', subLabel: 'Tháng 10 - 12', months: [9, 10, 11], cumulativeUpToMonth: 11 },
+  // 6 Months (Bán niên)
+  { id: 'h-1', type: 'half', label: '6 tháng đầu năm', shortLabel: '6T Đầu năm', subLabel: 'Tháng 1 - 6', months: [0, 1, 2, 3, 4, 5], cumulativeUpToMonth: 5 },
+  { id: 'h-2', type: 'half', label: '6 tháng cuối năm', shortLabel: '6T Cuối năm', subLabel: 'Tháng 7 - 12', months: [6, 7, 8, 9, 10, 11], cumulativeUpToMonth: 11 },
+  // 12 Months
+  ...Array.from({ length: 12 }, (_, i) => ({
+    id: `m-${i}`,
+    type: 'month' as PeriodType,
+    label: `Tháng ${i + 1}`,
+    shortLabel: `T${i + 1}`,
+    subLabel: `Tháng ${i + 1}`,
+    months: [i],
+    cumulativeUpToMonth: i,
+  })),
+  // Full Year
+  { id: 'year', type: 'year', label: 'Cả năm', shortLabel: 'Cả năm', subLabel: 'Tháng 1 - 12', months: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], cumulativeUpToMonth: 11 },
+];
+
 export default function App() {
   const [allDepts, setAllDepts] = useState<DepartmentData[]>([]);
   const [selectedDeptId, setSelectedDeptId] = useState('all');
-  const [selectedMonth, setSelectedMonth] = useState<number>(0);
+  const [selectedPeriodId, setSelectedPeriodId] = useState<string>('m-0');
+  const [periodFilterTab, setPeriodFilterTab] = useState<'all' | 'quarter' | 'half' | 'month'>('all');
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [isDeptMenuOpen, setIsDeptMenuOpen] = useState(false);
   const [isMonthMenuOpen, setIsMonthMenuOpen] = useState(false);
   const [isYearMenuOpen, setIsYearMenuOpen] = useState(false);
   const [isDataEntryOpen, setIsDataEntryOpen] = useState(false);
+
+  const selectedPeriod = useMemo(() => {
+    return PERIODS.find(p => p.id === selectedPeriodId) || PERIODS[0];
+  }, [selectedPeriodId]);
+
+  const selectedMonth = selectedPeriod.cumulativeUpToMonth;
+  const annualThreshold = ((selectedPeriod.cumulativeUpToMonth + 1) / 12) * 100;
 
   const [isYearManagementOpen, setIsYearManagementOpen] = useState(false);
   const [isGSheetModalOpen, setIsGSheetModalOpen] = useState(false);
@@ -38,8 +81,6 @@ export default function App() {
   const [selectedExportIds, setSelectedExportIds] = useState<string[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [visibleCharts, setVisibleCharts] = useState<Set<string>>(new Set());
-
-  const annualThreshold = ((selectedMonth + 1) / 12) * 100;
 
   const PROFIT_INDICATORS = [
     { id: 'netRevenue', name: 'Doanh thu' },
@@ -157,15 +198,15 @@ export default function App() {
         const reversedMonthly = [...company.monthly].reverse();
         const lastActualIndexFromEnd = reversedMonthly.findIndex(m => m.actual > 0);
         const defaultMonth = lastActualIndexFromEnd === -1 ? 0 : company.monthly.length - 1 - lastActualIndexFromEnd;
-        setSelectedMonth(defaultMonth);
+        setSelectedPeriodId(prev => (prev.startsWith('q-') || prev.startsWith('h-') || prev === 'year') ? prev : `m-${defaultMonth}`);
       }
     }
   }, [selectedYear]);
 
   const cumulativeOverview = useMemo(() => {
     return allDepts.map(dept => {
-      const cum = dataService.calculateCumulative(dept.monthly, selectedMonth);
-      const currentMonth = dept.monthly[selectedMonth];
+      const cum = dataService.calculateCumulative(dept.monthly, selectedPeriod.cumulativeUpToMonth);
+      const periodMonths = selectedPeriod.months;
 
       if (dashboardTab === 'profit') {
         const profitIndicators = PROFIT_INDICATORS.map(ind => {
@@ -174,9 +215,9 @@ export default function App() {
           const lastYearField = `${ind.id}LastYear` as keyof typeof cum;
           const annualPlanField = `annual${ind.id.charAt(0).toUpperCase() + ind.id.slice(1)}Plan` as keyof typeof cum;
           
-          const mActual = (currentMonth as any)[actualField] || 0;
-          const mPlan = (currentMonth as any)[planField] || 0;
-          const mLastYear = (currentMonth as any)[lastYearField] || 0;
+          const mActual = periodMonths.reduce((sum, m) => sum + ((dept.monthly[m] as any)?.[actualField] || 0), 0);
+          const mPlan = periodMonths.reduce((sum, m) => sum + ((dept.monthly[m] as any)?.[planField] || 0), 0);
+          const mLastYear = periodMonths.reduce((sum, m) => sum + ((dept.monthly[m] as any)?.[lastYearField] || 0), 0);
           
           const cActual = (cum as any)[actualField] || 0;
           const cPlan = (cum as any)[planField] || 0;
@@ -201,15 +242,19 @@ export default function App() {
           };
         });
 
+        const deptProfitActual = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.profitActual || 0), 0);
+        const deptProfitPlan = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.profitPlan || 0), 0);
+        const deptProfitLastYear = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.profitLastYear || 0), 0);
+
         return {
           ...dept,
           profitIndicators,
-          // Monthly
-          monthActual: currentMonth.profitActual || 0,
-          monthPlan: currentMonth.profitPlan || 0,
-          monthLastYear: currentMonth.profitLastYear || 0,
-          monthPerfVsPlan: calculatePerformance(currentMonth.profitActual || 0, currentMonth.profitPlan || 0),
-          monthPerfVsLastYear: calculatePerformance(currentMonth.profitActual || 0, currentMonth.profitLastYear || 0),
+          // Period values
+          monthActual: deptProfitActual,
+          monthPlan: deptProfitPlan,
+          monthLastYear: deptProfitLastYear,
+          monthPerfVsPlan: calculatePerformance(deptProfitActual, deptProfitPlan),
+          monthPerfVsLastYear: calculatePerformance(deptProfitActual, deptProfitLastYear),
           // Cumulative
           actual: cum.profitActual || 0,
           plan: cum.profitPlan || 0,
@@ -221,14 +266,18 @@ export default function App() {
         };
       }
 
+      const pActual = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.actual || 0), 0);
+      const pPlan = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.plan || 0), 0);
+      const pLastYear = periodMonths.reduce((sum, m) => sum + (dept.monthly[m]?.lastYear || 0), 0);
+
       return {
         ...dept,
-        // Monthly
-        monthActual: currentMonth.actual,
-        monthPlan: currentMonth.plan,
-        monthLastYear: currentMonth.lastYear,
-        monthPerfVsPlan: calculatePerformance(currentMonth.actual, currentMonth.plan),
-        monthPerfVsLastYear: calculatePerformance(currentMonth.actual, currentMonth.lastYear),
+        // Period values
+        monthActual: pActual,
+        monthPlan: pPlan,
+        monthLastYear: pLastYear,
+        monthPerfVsPlan: calculatePerformance(pActual, pPlan),
+        monthPerfVsLastYear: calculatePerformance(pActual, pLastYear),
         // Cumulative
         actual: cum.actual,
         plan: cum.plan,
@@ -239,7 +288,7 @@ export default function App() {
         annualCompletion: calculatePerformance(cum.actual, cum.annualPlan),
       };
     });
-  }, [allDepts, selectedMonth, dashboardTab]);
+  }, [allDepts, selectedPeriod, dashboardTab]);
 
   const sortedOverview = useMemo(() => {
     const company = cumulativeOverview.find(d => d.type === 'company');
@@ -864,27 +913,28 @@ export default function App() {
       const themeName = dashboardTab === 'revenue' ? "DOANH THU" : "LỢI NHUẬN";
 
       const getExportItemTitle = (id: string): { title: string, subtitle: string } => {
+        const periodTitle = selectedPeriod.label.toUpperCase();
         if (id === 'section-bans') {
           return {
-            title: `BẢNG HIỆU SUẤT KHỐI BAN - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            title: `BẢNG HIỆU SUẤT KHỐI BAN - ${periodTitle}/${selectedYear}`,
             subtitle: "Báo cáo tiến độ hoàn thành các chỉ số hoạt động then chốt"
           };
         }
         if (id === 'company-charts') {
           return {
-            title: `BIỂU ĐỒ DIỄN BIẾN KHỐI BAN - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            title: `BIỂU ĐỒ DIỄN BIẾN KHỐI BAN - ${periodTitle}/${selectedYear}`,
             subtitle: "Xu hướng chỉ số hiệu suất hoạt động qua các tháng - Khối Ban"
           };
         }
         if (id === 'company-charts-profit') {
           return {
-            title: `BIỂU ĐỒ DIỄN BIẾN TOÀN CÔNG TY - THÁNG ${selectedMonth + 1}/${selectedYear}`,
+            title: `BIỂU ĐỒ DIỄN BIẾN TOÀN CÔNG TY - ${periodTitle}/${selectedYear}`,
             subtitle: "Diễn biến chỉ tiêu EBITDA thực tế so với kế hoạch và cùng kỳ năm trước"
           };
         }
         if (id === 'section-centers') {
           return {
-            title: dashboardTab === 'profit' ? `BẢNG HỢP NHẤT DOANH NGHIỆP` : `BẢNG TỔNG HỢP TRUNG TÂM`,
+            title: dashboardTab === 'profit' ? `BẢNG HỢP NHẤT DOANH NGHIỆP - ${periodTitle}` : `BẢNG TỔNG HỢP TRUNG TÂM - ${periodTitle}`,
             subtitle: dashboardTab === 'profit' ? "Báo cáo tích hợp toàn diện Doanh thu, Chi phí, PBT và EBITDA" : "Báo cáo tổng hợp số liệu hiệu quả hoạt động các Trung tâm"
           };
         }
@@ -1362,7 +1412,7 @@ export default function App() {
 
           if (monthCols.length > 0) {
             row1.push({ 
-              text: `Tháng ${selectedMonth + 1}`, 
+              text: selectedPeriod.label, 
               options: { 
                 colspan: monthCols.length, 
                 bold: true, 
@@ -1636,7 +1686,7 @@ export default function App() {
       }
 
       await pptx.writeFile({
-        fileName: `Bao-cao-hieu-suat-${dashboardTab}-${selectedYear}-${selectedMonth + 1}.pptx`
+        fileName: `Bao-cao-hieu-suat-${dashboardTab}-${selectedYear}-${slugify(selectedPeriod.label)}.pptx`
       });
 
       setIsExportModalOpen(false);
@@ -1932,41 +1982,200 @@ export default function App() {
               </AnimatePresence>
             </div>
 
-            {/* Month Selector */}
+            {/* Period Selector (Tháng / Quý / 6 Tháng / Cả năm) */}
             <div className="relative">
               <button 
                 onClick={() => setIsMonthMenuOpen(!isMonthMenuOpen)}
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 transition-all shadow-sm"
+                className="flex items-center gap-2.5 px-3.5 py-2 bg-white border border-zinc-200 rounded-lg text-sm font-bold text-zinc-700 hover:border-zinc-400 hover:shadow-sm transition-all shadow-sm group"
+                title="Chọn kỳ xem xét (Tháng, Quý, 6 tháng, Cả năm)"
               >
-                <Filter size={16} className="text-zinc-400" />
-                <span>{months[selectedMonth]}</span>
-                <ChevronDown size={16} className={cn("text-zinc-400 transition-transform", isMonthMenuOpen && "rotate-180")} />
+                <Calendar size={16} className="text-zinc-500 group-hover:text-blue-600 transition-colors" />
+                <div className="flex items-center gap-1.5">
+                  <span className={cn(
+                    "text-[10px] uppercase tracking-wider font-extrabold px-1.5 py-0.5 rounded",
+                    selectedPeriod.type === 'quarter' ? "bg-blue-100 text-blue-700" :
+                    selectedPeriod.type === 'half' ? "bg-amber-100 text-amber-800" :
+                    selectedPeriod.type === 'year' ? "bg-emerald-100 text-emerald-800" :
+                    "bg-zinc-100 text-zinc-600"
+                  )}>
+                    {selectedPeriod.type === 'quarter' ? 'Quý' : 
+                     selectedPeriod.type === 'half' ? '6 Tháng' : 
+                     selectedPeriod.type === 'year' ? 'Năm' : 'Tháng'}
+                  </span>
+                  <span className="text-zinc-900">{selectedPeriod.label}</span>
+                </div>
+                <ChevronDown size={15} className={cn("text-zinc-400 transition-transform duration-200", isMonthMenuOpen && "rotate-180")} />
               </button>
 
               <AnimatePresence>
                 {isMonthMenuOpen && (
                   <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    className="absolute top-full left-0 mt-2 w-48 bg-white border border-zinc-200 rounded-xl shadow-xl z-50 overflow-hidden"
+                    initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.98 }}
+                    className="absolute top-full left-0 mt-2 w-80 md:w-96 bg-white border border-zinc-200 rounded-2xl shadow-2xl z-50 overflow-hidden"
                   >
-                    <div className="max-h-64 overflow-y-auto">
-                      {months.map((month, index) => (
-                        <button
-                          key={month}
-                          onClick={() => {
-                            setSelectedMonth(index);
-                            setIsMonthMenuOpen(false);
-                          }}
-                          className={cn(
-                            "w-full px-3 py-2 text-left text-[11px] font-bold transition-colors hover:bg-zinc-50",
-                            selectedMonth === index ? "text-blue-600 bg-blue-50/50" : "text-zinc-600"
-                          )}
-                        >
-                          {month}
-                        </button>
-                      ))}
+                    {/* Filter Tabs */}
+                    <div className="p-2.5 bg-zinc-50 border-b border-zinc-100">
+                      <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-zinc-200 text-xs font-bold">
+                        {[
+                          { id: 'all', label: 'Tất cả' },
+                          { id: 'quarter', label: 'Theo Quý' },
+                          { id: 'half', label: '6 Tháng' },
+                          { id: 'month', label: 'Tháng' },
+                        ].map(tab => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setPeriodFilterTab(tab.id as any)}
+                            className={cn(
+                              "flex-1 py-1 px-1.5 rounded-lg text-center transition-all text-[11px]",
+                              periodFilterTab === tab.id 
+                                ? "bg-zinc-900 text-white shadow-sm" 
+                                : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                            )}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="p-3 max-h-[400px] overflow-y-auto space-y-3.5">
+                      {/* Section: THEO QUÝ */}
+                      {(periodFilterTab === 'all' || periodFilterTab === 'quarter') && (
+                        <div>
+                          <div className="flex items-center justify-between px-1 mb-1.5">
+                            <span className="text-[10px] font-extrabold text-blue-600 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                              Xem theo Quý (4 Quý)
+                            </span>
+                            <span className="text-[10px] text-zinc-400 font-medium">3 tháng/quý</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {PERIODS.filter(p => p.type === 'quarter').map(q => (
+                              <button
+                                key={q.id}
+                                onClick={() => {
+                                  setSelectedPeriodId(q.id);
+                                  setIsMonthMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "p-2.5 rounded-xl border text-left transition-all flex flex-col gap-0.5",
+                                  selectedPeriodId === q.id
+                                    ? "bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-500/20"
+                                    : "bg-blue-50/40 border-blue-100 text-zinc-700 hover:bg-blue-50 hover:border-blue-200"
+                                )}
+                              >
+                                <span className={cn("text-xs font-bold", selectedPeriodId === q.id ? "text-white" : "text-blue-950")}>
+                                  {q.label}
+                                </span>
+                                <span className={cn("text-[10px]", selectedPeriodId === q.id ? "text-blue-100" : "text-zinc-500 font-medium")}>
+                                  {q.subLabel}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Section: THEO 6 THÁNG */}
+                      {(periodFilterTab === 'all' || periodFilterTab === 'half') && (
+                        <div>
+                          <div className="flex items-center justify-between px-1 mb-1.5">
+                            <span className="text-[10px] font-extrabold text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              Xem theo 6 Tháng (Bán niên)
+                            </span>
+                            <span className="text-[10px] text-zinc-400 font-medium">6 tháng/kỳ</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {PERIODS.filter(p => p.type === 'half').map(h => (
+                              <button
+                                key={h.id}
+                                onClick={() => {
+                                  setSelectedPeriodId(h.id);
+                                  setIsMonthMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "p-2.5 rounded-xl border text-left transition-all flex flex-col gap-0.5",
+                                  selectedPeriodId === h.id
+                                    ? "bg-amber-600 text-white border-amber-600 shadow-md shadow-amber-500/20"
+                                    : "bg-amber-50/40 border-amber-100 text-zinc-700 hover:bg-amber-50 hover:border-amber-200"
+                                )}
+                              >
+                                <span className={cn("text-xs font-bold", selectedPeriodId === h.id ? "text-white" : "text-amber-950")}>
+                                  {h.label}
+                                </span>
+                                <span className={cn("text-[10px]", selectedPeriodId === h.id ? "text-amber-100" : "text-zinc-500 font-medium")}>
+                                  {h.subLabel}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Section: CẢ NĂM */}
+                      {(periodFilterTab === 'all') && (
+                        <div>
+                          <div className="flex items-center justify-between px-1 mb-1.5">
+                            <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              Toàn năm
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedPeriodId('year');
+                              setIsMonthMenuOpen(false);
+                            }}
+                            className={cn(
+                              "w-full p-2.5 rounded-xl border text-left transition-all flex items-center justify-between",
+                              selectedPeriodId === 'year'
+                                ? "bg-emerald-600 text-white border-emerald-600 shadow-md shadow-emerald-500/20"
+                                : "bg-emerald-50/40 border-emerald-100 text-zinc-700 hover:bg-emerald-50 hover:border-emerald-200"
+                            )}
+                          >
+                            <span className={cn("text-xs font-bold", selectedPeriodId === 'year' ? "text-white" : "text-emerald-950")}>
+                              Cả năm {selectedYear}
+                            </span>
+                            <span className={cn("text-[10px]", selectedPeriodId === 'year' ? "text-emerald-100" : "text-zinc-500 font-medium")}>
+                              Tháng 1 - 12
+                            </span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Section: THEO THÁNG */}
+                      {(periodFilterTab === 'all' || periodFilterTab === 'month') && (
+                        <div>
+                          <div className="flex items-center justify-between px-1 mb-1.5">
+                            <span className="text-[10px] font-extrabold text-zinc-500 uppercase tracking-widest flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                              Xem theo từng Tháng (12 tháng)
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-4 gap-1.5">
+                            {PERIODS.filter(p => p.type === 'month').map(m => (
+                              <button
+                                key={m.id}
+                                onClick={() => {
+                                  setSelectedPeriodId(m.id);
+                                  setIsMonthMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "py-2 px-1 text-center rounded-xl border text-xs font-bold transition-all",
+                                  selectedPeriodId === m.id
+                                    ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                                    : "bg-zinc-50 border-zinc-100 text-zinc-700 hover:bg-zinc-100 hover:border-zinc-200"
+                                )}
+                              >
+                                {m.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -2007,41 +2216,109 @@ export default function App() {
       </header>
 
       <main className="max-w-[1600px] mx-auto px-4 py-4 space-y-4">
-        {/* Tab Switcher */}
-        <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-lg w-fit">
-          <button
-            onClick={() => setDashboardTab('revenue')}
-            className={cn(
-              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
-              dashboardTab === 'revenue' 
-                ? "bg-white text-zinc-900 shadow-sm" 
-                : "text-zinc-500 hover:text-zinc-700"
-            )}
-          >
-            Doanh thu
-          </button>
-          <button
-            onClick={() => setDashboardTab('profit')}
-            className={cn(
-              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
-              dashboardTab === 'profit' 
-                ? "bg-white text-zinc-900 shadow-sm" 
-                : "text-zinc-500 hover:text-zinc-700"
-            )}
-          >
-            Lợi nhuận
-          </button>
-          <button
-            onClick={() => setDashboardTab('product')}
-            className={cn(
-              "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
-              dashboardTab === 'product' 
-                ? "bg-white text-zinc-900 shadow-sm" 
-                : "text-zinc-500 hover:text-zinc-700"
-            )}
-          >
-            Sản phẩm TMC
-          </button>
+        {/* Tab Switcher & Quick Period Controls */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-1 p-1 bg-zinc-100 rounded-lg w-fit">
+            <button
+              onClick={() => setDashboardTab('revenue')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+                dashboardTab === 'revenue' 
+                  ? "bg-white text-zinc-900 shadow-sm" 
+                  : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Doanh thu
+            </button>
+            <button
+              onClick={() => setDashboardTab('profit')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+                dashboardTab === 'profit' 
+                  ? "bg-white text-zinc-900 shadow-sm" 
+                  : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Lợi nhuận
+            </button>
+            <button
+              onClick={() => setDashboardTab('product')}
+              className={cn(
+                "px-4 py-1.5 rounded-md text-sm font-bold transition-all",
+                dashboardTab === 'product' 
+                  ? "bg-white text-zinc-900 shadow-sm" 
+                  : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              Sản phẩm TMC
+            </button>
+          </div>
+
+          {/* Quick Period Selector Pills (Quý, 6 Tháng, Cả năm) */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-white border border-zinc-200 p-1 rounded-xl shadow-xs">
+            <div className="flex items-center gap-1 px-1.5 text-[10px] font-extrabold text-zinc-400 uppercase tracking-wider">
+              <Calendar size={13} className="text-zinc-400" />
+              <span>Xem nhanh:</span>
+            </div>
+
+            {/* Quý pills */}
+            <div className="flex items-center gap-0.5 bg-blue-50/70 p-0.5 rounded-lg border border-blue-100/60">
+              {['q-1', 'q-2', 'q-3', 'q-4'].map(qId => {
+                const q = PERIODS.find(p => p.id === qId)!;
+                return (
+                  <button
+                    key={qId}
+                    onClick={() => setSelectedPeriodId(qId)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] font-bold transition-all",
+                      selectedPeriodId === qId
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "text-blue-900 hover:bg-blue-100/70"
+                    )}
+                    title={`${q.label} (${q.subLabel})`}
+                  >
+                    {q.shortLabel}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* 6 Tháng pills */}
+            <div className="flex items-center gap-0.5 bg-amber-50/70 p-0.5 rounded-lg border border-amber-100/60">
+              {[
+                { id: 'h-1', label: '6T Đầu năm', title: '6 tháng đầu năm (Tháng 1 - Tháng 6)' },
+                { id: 'h-2', label: '6T Cuối năm', title: '6 tháng cuối năm (Tháng 7 - Tháng 12)' },
+              ].map(h => (
+                <button
+                  key={h.id}
+                  onClick={() => setSelectedPeriodId(h.id)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md text-[11px] font-bold transition-all",
+                    selectedPeriodId === h.id
+                      ? "bg-amber-600 text-white shadow-xs"
+                      : "text-amber-900 hover:bg-amber-100/70"
+                  )}
+                  title={h.title}
+                >
+                  {h.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Cả năm */}
+            <button
+              onClick={() => setSelectedPeriodId('year')}
+              className={cn(
+                "px-2.5 py-1 rounded-md text-[11px] font-bold transition-all border",
+                selectedPeriodId === 'year'
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                  : "bg-emerald-50/50 border-emerald-100 text-emerald-800 hover:bg-emerald-100/70"
+              )}
+              title="Cả năm (Tháng 1 - Tháng 12)"
+            >
+              Cả năm
+            </button>
+          </div>
         </div>
 
         {/* Legend / Info */}
@@ -2078,7 +2355,7 @@ export default function App() {
                 onClick={() => setIsSortMenuOpen(!isSortMenuOpen)}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-50 border border-zinc-200 rounded-lg text-[11px] font-bold text-zinc-700 hover:border-zinc-400 transition-all"
               >
-                {sortConfig.field === 'monthPerfVsPlan' ? '% KH Tháng' : 
+                {sortConfig.field === 'monthPerfVsPlan' ? `% KH ${selectedPeriod.shortLabel}` : 
                  sortConfig.field === 'perfVsPlan' ? '% KH Lũy kế' : 
                  '% HT KH Năm'}
                 <ChevronDown size={14} className={cn("text-zinc-400 transition-transform", isSortMenuOpen && "rotate-180")} />
@@ -2094,7 +2371,7 @@ export default function App() {
                   >
                     <div className="p-1">
                       {[
-                        { id: 'monthPerfVsPlan', label: '% KH Tháng' },
+                        { id: 'monthPerfVsPlan', label: `% KH ${selectedPeriod.shortLabel}` },
                         { id: 'perfVsPlan', label: '% KH Lũy kế' },
                         { id: 'annualCompletion', label: '% HT KH Năm' }
                       ].map((item) => (
@@ -2233,7 +2510,7 @@ export default function App() {
                         <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
                           <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
                           {getVisibleCount('Tháng') > 0 && (
-                            <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                            <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{selectedPeriod.label}</th>
                           )}
                           {getVisibleCount('Lũy kế') > 0 && (
                             <th colSpan={getVisibleCount('Lũy kế')} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
@@ -2311,7 +2588,7 @@ export default function App() {
                       <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
                         <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
                         {getVisibleCount('Tháng') > 0 && (
-                          <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                          <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{selectedPeriod.label}</th>
                         )}
                         {getVisibleCount('Lũy kế') > 0 && (
                           <th colSpan={getVisibleCount('Lũy kế')} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
@@ -2376,7 +2653,7 @@ export default function App() {
                           <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
                             <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Bộ phận</th>
                             {getVisibleCount('Tháng') > 0 && (
-                              <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                              <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{selectedPeriod.label}</th>
                             )}
                             {getVisibleCount('Lũy kế') > 0 && (
                               <th colSpan={getVisibleCount('Lũy kế')} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
@@ -2456,7 +2733,7 @@ export default function App() {
                       <tr className="bg-zinc-200 text-[12px] font-bold text-zinc-900 uppercase tracking-widest border-b border-zinc-300">
                         <th rowSpan={2} className="px-1 py-3 border-r border-zinc-300">Sản phẩm</th>
                         {getVisibleCount('Tháng') > 0 && (
-                          <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{months[selectedMonth]}</th>
+                          <th colSpan={getVisibleCount('Tháng')} className="px-1 py-2 text-center border-r border-zinc-300 bg-blue-100/80">{selectedPeriod.label}</th>
                         )}
                         {getVisibleCount('Lũy kế') > 0 && (
                           <th colSpan={getVisibleCount('Lũy kế')} className="px-1 py-2 text-center border-r border-zinc-300 bg-amber-100/80">Lũy kế</th>
@@ -2597,7 +2874,7 @@ export default function App() {
                             <div className="flex items-center gap-2 mb-6">
                               <div className="w-1 h-4 bg-blue-500 rounded-full" />
                               <h3 className="text-sm font-bold text-zinc-800 uppercase tracking-wider">
-                                Tỷ trọng doanh thu thực tế tháng {months[selectedMonth]}
+                                Tỷ trọng doanh thu thực tế {selectedPeriod.label}
                               </h3>
                             </div>
                             <div className="h-[400px] w-full">
@@ -2635,7 +2912,7 @@ export default function App() {
                                 </ResponsiveContainer>
                               ) : (
                                 <div className="h-full flex items-center justify-center text-zinc-400 text-sm italic">
-                                  Không có dữ liệu thực tế trong tháng
+                                  Không có dữ liệu thực tế trong kỳ
                                 </div>
                               )}
                             </div>
